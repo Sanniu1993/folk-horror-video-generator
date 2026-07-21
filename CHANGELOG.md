@@ -7,6 +7,14 @@
 
 ## 2026-07-21
 
+### 图生视频 V3-lite:Ken Burns 动效 + 讲述者配音 + 字幕
+- **改了什么**:
+  - 新增 `backend/video_builder.py`:程序化动效(Ken Burns 推拉/平移,5 种预设)+ 交叉淡入 + 恐怖氛围叠加(暗角/颗粒),用 pip 自带的静态 ffmpeg(不依赖 brew);`build_video()` 出无声动效视频。
+  - Phase 2:`synth_narration()`(macOS `say -v Tingting` 中文配音)、`_render_subtitle_png()`(Pillow + STHeiti 渲染中文字幕,白字黑边)、`build_narrated_video()` 按场景把配音/字幕/画面同步(每句旁白时长决定该镜头时长)。
+  - 新增 `backend/short_video.py`:theme → DeepSeek 极短故事(N 镜头,每镜头 prompt + ≤18 字旁白)→ ComfyUI 出图 → 带配音字幕的成片;config 增加 `video` 段。
+- **为什么**:走程序化动效而非扩散图生视频,M1/M3 无 GPU 压力、可反复调;先做"极短故事配极短视频"验证全链路。
+- **如何验证**:① 用 3 张现成图单测 Ken Burns + 配音 + 字幕,产出 7.7s 视频(含 aac 音轨,字幕正确渲染);② 跑《走夜路见红影》3 镜头完整成片。
+
 ### 分镜图数量控制 + IPAdapter 人物一致(V2)
 - **改了什么**:
   - 前端增加「分镜图数量」下拉(1–10)与「人物一致 (IPAdapter)」开关,并显示角色参考图;网格改为按实际帧数渲染。

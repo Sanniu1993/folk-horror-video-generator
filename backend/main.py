@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from logging_config import setup_logging
 from pipeline import ROOT, load_config, run
+from short_video import run_short_video
 
 setup_logging(load_config())
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ def _new_job(theme: str, render_images: bool) -> str:
             "prompts": None,
             "images": [],            # [{scene_id,file,meta}]
             "characters": [],        # [{name,url}] reference portraits
+            "video": None,           # url of the finished narrated clip
             "error": None,
         }
     return job_id
@@ -73,6 +75,7 @@ def _run_job(
     render_images: bool,
     num_frames: int,
     character_consistency: bool,
+    mode: str = "frames",
 ) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
@@ -99,6 +102,8 @@ def _run_job(
                         "meta": payload.get("meta", {}),
                     }
                 )
+            elif event == "video":
+                job["video"] = payload["url"]
             elif event == "done":
                 job["status"] = "done"
             elif event == "cancelled":
@@ -109,14 +114,22 @@ def _run_job(
 
     cancel_event = _cancels[job_id]
     try:
-        run(
-            theme,
-            render_images=render_images,
-            on_event=on_event,
-            should_cancel=cancel_event.is_set,
-            num_frames=num_frames,
-            character_consistency=character_consistency,
-        )
+        if mode == "video":
+            run_short_video(
+                theme,
+                num_scenes=num_frames,
+                on_event=on_event,
+                should_cancel=cancel_event.is_set,
+            )
+        else:
+            run(
+                theme,
+                render_images=render_images,
+                on_event=on_event,
+                should_cancel=cancel_event.is_set,
+                num_frames=num_frames,
+                character_consistency=character_consistency,
+            )
         with _lock:
             if _jobs[job_id]["status"] == "running":
                 _jobs[job_id]["status"] = "done"
@@ -131,6 +144,7 @@ class GenerateRequest(BaseModel):
     render_images: bool = True
     num_frames: int = 10
     character_consistency: bool = False
+    mode: str = "frames"       # "frames" (storyboard) | "video" (narrated clip)
 
 
 @app.post("/api/generate")
@@ -140,11 +154,11 @@ def generate(req: GenerateRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="theme 不能为空")
     frames = max(1, min(10, req.num_frames))  # clamp to sane range
     job_id = _new_job(theme, req.render_images)
-    logger.info("Job %s created (render=%s, frames=%d, char_consistency=%s): %r",
-                job_id, req.render_images, frames, req.character_consistency, theme)
+    logger.info("Job %s created (mode=%s, render=%s, frames=%d, char_consistency=%s): %r",
+                job_id, req.mode, req.render_images, frames, req.character_consistency, theme)
     threading.Thread(
         target=_run_job,
-        args=(job_id, theme, req.render_images, frames, req.character_consistency),
+        args=(job_id, theme, req.render_images, frames, req.character_consistency, req.mode),
         daemon=True,
     ).start()
     return {"job_id": job_id}

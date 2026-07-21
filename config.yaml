@@ -50,6 +50,14 @@ negative_prompt: >-
 
 output_dir: "outputs"
 
+video:
+  # "Living stills" motion video (Ken Burns) — no GPU, runs on any Mac.
+  fps: 30
+  size: 1024
+  clip_seconds: 4.0        # per-image duration (narrated mode overrides by voice length)
+  crossfade_seconds: 0.6   # crossfade between clips
+  mood_overlay: true       # vignette + film grain for horror atmosphere
+
 logging:
   # Console level (the file always logs at DEBUG). Override with LOG_LEVEL env.
   level: "INFO"           # DEBUG | INFO | WARNING | ERROR

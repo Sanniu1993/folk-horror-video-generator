@@ -39,6 +39,9 @@
   select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 4px 8px; font-size: 13px; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 10px; opacity: .8; }
+  .videobox { display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .videobox video { width: 100%; max-width: 640px; border-radius: 8px; display: block; margin: 0 auto; background: #000; }
   .refs { display: none; background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 14px 18px; margin-top: 18px; }
   .refs .section-title { margin-top: 0; }
@@ -147,8 +150,9 @@
       </label>
       <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片</label>
       <label class="chk"><input type="checkbox" id="charc" /> 人物一致 (IPAdapter)</label>
+      <label class="chk"><input type="checkbox" id="videomode" /> 🎬 短视频模式（配音+字幕）</label>
     </div>
-    <div class="hint">调试建议：先把「分镜图数量」调小（如 2–3 张）快速验证风格与人物，满意后再出全 10 张。</div>
+    <div class="hint">调试建议：先把「分镜图数量」调小（如 2–3 张）快速验证风格与人物，满意后再出全 10 张。短视频模式下该数字即镜头数。</div>
   </div>
 
   <div class="status" id="status">
@@ -165,6 +169,11 @@
 
     <div class="section-title" id="arc-title" style="display:none">剧情</div>
     <ol class="arc" id="s-arc"></ol>
+  </div>
+
+  <div class="videobox" id="videobox">
+    <div class="section-title">成片（配音 + 字幕）</div>
+    <video id="player" controls playsinline></video>
   </div>
 
   <div class="refs" id="refs">
@@ -213,12 +222,15 @@ async function start() {
   const render = $("render").checked;
   const frames = parseInt($("frames").value, 10) || 10;
   const charConsistency = $("charc").checked;
+  const mode = $("videomode").checked ? "video" : "frames";
   expectedFrames = frames;
 
   $("err").style.display = "none";
   $("story").style.display = "none";
   $("board").style.display = "none";
   $("refs").style.display = "none";
+  $("videobox").style.display = "none";
+  $("player").removeAttribute("src");
   $("s-refs").innerHTML = "";
   $("s-scenes").innerHTML = "";
   $("grid").innerHTML = "";
@@ -226,7 +238,8 @@ async function start() {
   $("stop").disabled = false;
   $("stop").textContent = "■ 停止";
   setRunning(true);
-  renderStages({ step: 1, label: STAGES[0] });
+  stageNames = [];
+  renderStages({ step: 1, total: mode === "video" ? 3 : 4, label: "故事创作" });
 
   let job_id;
   try {
@@ -235,7 +248,7 @@ async function start() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         theme, render_images: render,
-        num_frames: frames, character_consistency: charConsistency,
+        num_frames: frames, character_consistency: charConsistency, mode,
       }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
@@ -261,6 +274,10 @@ async function poll(job_id) {
   if (job.story) renderStory(job.story);
   if (job.characters && job.characters.length) renderRefs(job.characters);
   if (job.scenes) renderScenes(job.scenes, job.prompts);
+  if (job.video) {
+    $("videobox").style.display = "block";
+    if ($("player").getAttribute("src") !== job.video) $("player").src = job.video;
+  }
   renderGrid(job);
 
   if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
@@ -276,12 +293,16 @@ async function poll(job_id) {
   }
 }
 
+let stageNames = [];
 function renderStages(stage) {
   const step = stage.step || 1;
-  $("stages").innerHTML = STAGES.map((name, i) => {
+  const total = stage.total || Math.max(stageNames.length, step);
+  if (stageNames.length !== total) stageNames = new Array(total).fill("");
+  if (stage.label) stageNames[step - 1] = stage.label;
+  $("stages").innerHTML = stageNames.map((name, i) => {
     const n = i + 1;
     const cls = n < step ? "done" : (n === step ? "active" : "");
-    return `<div class="stage ${cls}"><span class="dot"></span>${n}. ${name}</div>`;
+    return `<div class="stage ${cls}"><span class="dot"></span>${n}. ${name || ("步骤" + n)}</div>`;
   }).join("");
 }
 function markStagesComplete() {
