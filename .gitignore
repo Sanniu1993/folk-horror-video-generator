@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# generated assets
+outputs/*/
+!outputs/.gitkeep
+
+# os / editor
+.DS_Store
+.idea/

@@ -1,0 +1,98 @@
+"""Thin wrapper around the DeepSeek chat API (OpenAI-compatible).
+
+Every agent in the pipeline talks to DeepSeek through this one client so that
+JSON-mode handling, retries and error reporting live in a single place.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import requests
+
+
+def _load_dotenv() -> None:
+    """Load KEY=VALUE lines from the project-root .env into os.environ.
+
+    Uses python-dotenv when available, otherwise a tiny built-in parser so the
+    project has no hard dependency just to read one key. Existing environment
+    variables always win over the file.
+    """
+    env_path = Path(__file__).parent.parent / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+        return
+    except ImportError:
+        pass
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+class DeepSeekError(RuntimeError):
+    pass
+
+
+class DeepSeekClient:
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.base_url = config.get("base_url", "https://api.deepseek.com").rstrip("/")
+        self.model = config.get("model", "deepseek-chat")
+        _load_dotenv()
+        self.api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not self.api_key:
+            raise DeepSeekError(
+                "DEEPSEEK_API_KEY is not set. Create a .env file in the project "
+                "root (cp .env.example .env) and add:\n"
+                "    DEEPSEEK_API_KEY=sk-...\n"
+                "or export it in your shell."
+            )
+
+    def chat_json(
+        self,
+        system: str,
+        user: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        """Send a chat request forcing a JSON object response, and parse it."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise DeepSeekError(
+                f"DeepSeek returned {resp.status_code}: {resp.text[:500]}"
+            )
+        content = resp.json()["choices"][0]["message"]["content"]
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise DeepSeekError(
+                f"Model did not return valid JSON:\n{content[:500]}"
+            ) from exc

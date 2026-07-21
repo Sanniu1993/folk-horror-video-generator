@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI 恐怖故事视觉生成器</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --panel-2: #1b1f26;
+    --border: #2a2f38;
+    --text: #d7dbe0;
+    --muted: #8b93a0;
+    --accent: #b3131c;
+    --accent-2: #7fb0d8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 26px; letter-spacing: 2px; margin: 0 0 4px; }
+  h1 .accent { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  .composer { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; }
+  textarea {
+    width: 100%; min-height: 70px; resize: vertical; background: var(--panel-2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 15px; font-family: inherit;
+  }
+  textarea:focus { outline: none; border-color: var(--accent-2); }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  label.chk { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  button {
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 11px 22px; font-size: 15px; cursor: pointer; letter-spacing: 1px;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.stop { background: #3a3f47; }
+  button.stop:hover { background: #4a505a; }
+  .examples { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .examples span {
+    font-size: 12px; color: var(--muted); border: 1px dashed var(--border);
+    padding: 4px 10px; border-radius: 20px; cursor: pointer;
+  }
+  .examples span:hover { color: var(--text); border-color: var(--accent-2); }
+
+  .status { margin: 24px 0 8px; display: none; }
+  .stages { display: flex; gap: 8px; flex-wrap: wrap; }
+  .stage {
+    flex: 1; min-width: 120px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--muted);
+  }
+  .stage.active { border-color: var(--accent-2); color: var(--text); }
+  .stage.active .dot { background: var(--accent-2); animation: pulse 1s infinite; }
+  .stage.done { color: var(--text); }
+  .stage.done .dot { background: #3fae6a; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--border); margin-right: 8px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .story { display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .story h2 { margin: 0 0 4px; font-size: 20px; }
+  .story .logline { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+  .bible { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .bible b { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 3px 10px; font-weight: normal; font-size: 12px; color: var(--accent-2); }
+  .chars { font-size: 13px; color: var(--muted); }
+  .chars .name { color: var(--text); }
+
+  .section-title { margin: 18px 0 10px; font-size: 14px; letter-spacing: 2px;
+    color: var(--accent-2); border-left: 3px solid var(--accent); padding-left: 10px; }
+  ol.arc { margin: 0; padding-left: 0; list-style: none; counter-reset: ch; }
+  ol.arc li { counter-increment: ch; position: relative; padding: 10px 0 10px 40px;
+    border-bottom: 1px dashed var(--border); }
+  ol.arc li:last-child { border-bottom: none; }
+  ol.arc li::before { content: counter(ch); position: absolute; left: 0; top: 10px;
+    width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%;
+    background: var(--panel-2); border: 1px solid var(--accent); color: var(--accent);
+    font-size: 13px; }
+  ol.arc .ch-title { color: var(--text); font-weight: 600; font-size: 14px; }
+  ol.arc .ch-event { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+  .board { display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .scene { padding: 10px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+  .scene:last-child { border-bottom: none; }
+  .scene .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+  .scene .sid { background: var(--accent); color: #fff; border-radius: 5px; padding: 1px 8px; font-size: 12px; }
+  .scene .tag { background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+    border-radius: 5px; padding: 1px 8px; font-size: 11px; }
+  .scene .visual { color: var(--text); }
+  .scene .prompt { color: var(--muted); font-size: 12px; margin-top: 3px; font-family: ui-monospace, monospace; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr));
+    gap: 12px; margin-top: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; aspect-ratio: 1; position: relative; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .idx { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.6);
+    color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+  .card.placeholder { display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px; border-style: dashed; }
+  .card.placeholder.busy { animation: pulse 1.4s infinite; }
+
+  .err { display: none; background: #2a1414; border: 1px solid var(--accent);
+    color: #f0b8b8; border-radius: 8px; padding: 12px 14px; margin-top: 18px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AI <span class="accent">恐怖故事</span> 视觉生成器</h1>
+  <div class="sub">输入一句主题 → 结构化故事 · 电影分镜 · 10 张风格统一关键帧</div>
+
+  <div class="composer">
+    <textarea id="theme" placeholder="例如：一个废弃医院里的午夜护士故事"></textarea>
+    <div class="examples">
+      <span>一个废弃医院里的午夜护士故事</span>
+      <span>老宅阁楼里被封住的一面镜子</span>
+      <span>末班地铁上多出来的一位乘客</span>
+    </div>
+    <div class="row">
+      <button id="go">生成</button>
+      <button id="stop" class="stop" style="display:none">■ 停止</button>
+      <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片（关掉则只出文本，几秒完成）</label>
+    </div>
+  </div>
+
+  <div class="status" id="status">
+    <div class="stages" id="stages"></div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <div class="story" id="story">
+    <h2 id="s-title"></h2>
+    <div class="logline" id="s-logline"></div>
+    <div class="bible" id="s-bible"></div>
+    <div class="chars" id="s-chars"></div>
+
+    <div class="section-title" id="arc-title" style="display:none">剧情</div>
+    <ol class="arc" id="s-arc"></ol>
+  </div>
+
+  <div class="board" id="board">
+    <div class="section-title">分镜 · 镜头脚本</div>
+    <div id="s-scenes"></div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+const STAGES = ["故事创作", "分镜规划", "Prompt 生成", "渲染关键帧"];
+const $ = (id) => document.getElementById(id);
+let timer = null;
+let currentJob = null;
+
+$("go").addEventListener("click", start);
+$("stop").addEventListener("click", stop);
+document.querySelectorAll(".examples span").forEach(el =>
+  el.addEventListener("click", () => { $("theme").value = el.textContent; }));
+
+function setRunning(running) {
+  $("go").disabled = running;
+  $("stop").style.display = running ? "inline-block" : "none";
+}
+
+async function stop() {
+  if (!currentJob) return;
+  $("stop").disabled = true;
+  $("stop").textContent = "停止中…";
+  try {
+    await fetch("/api/jobs/" + currentJob + "/cancel", { method: "POST" });
+  } catch (e) { /* the poll loop will reflect the final state */ }
+}
+
+async function start() {
+  const theme = $("theme").value.trim();
+  if (!theme) { $("theme").focus(); return; }
+  const render = $("render").checked;
+
+  $("err").style.display = "none";
+  $("story").style.display = "none";
+  $("board").style.display = "none";
+  $("s-scenes").innerHTML = "";
+  $("grid").innerHTML = "";
+  $("status").style.display = "block";
+  $("stop").disabled = false;
+  $("stop").textContent = "■ 停止";
+  setRunning(true);
+  renderStages({ step: 1, label: STAGES[0] });
+
+  let job_id;
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ theme, render_images: render }),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    job_id = (await r.json()).job_id;
+  } catch (e) {
+    showError("启动失败：" + e.message);
+    setRunning(false);
+    return;
+  }
+  currentJob = job_id;
+  timer = setInterval(() => poll(job_id), 1500);
+  poll(job_id);
+}
+
+async function poll(job_id) {
+  let job;
+  try {
+    const r = await fetch("/api/jobs/" + job_id);
+    job = await r.json();
+  } catch (e) { return; }
+
+  if (job.stage) renderStages(job.stage);
+  if (job.story) renderStory(job.story);
+  if (job.scenes) renderScenes(job.scenes, job.prompts);
+  renderGrid(job);
+
+  if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
+    clearInterval(timer);
+    setRunning(false);
+    currentJob = null;
+    if (job.status === "done") markStagesComplete();
+    if (job.status === "error") showError("生成中断：" + (job.error || "未知错误"));
+    if (job.status === "cancelled") {
+      const n = (job.images || []).length;
+      showError("已停止生成" + (n ? `（已保留 ${n} 张已完成的图片）` : "") + "。");
+    }
+  }
+}
+
+function renderStages(stage) {
+  const step = stage.step || 1;
+  $("stages").innerHTML = STAGES.map((name, i) => {
+    const n = i + 1;
+    const cls = n < step ? "done" : (n === step ? "active" : "");
+    return `<div class="stage ${cls}"><span class="dot"></span>${n}. ${name}</div>`;
+  }).join("");
+}
+function markStagesComplete() {
+  document.querySelectorAll(".stage").forEach(el => {
+    el.classList.remove("active"); el.classList.add("done");
+  });
+}
+
+function renderStory(s) {
+  $("story").style.display = "block";
+  $("s-title").textContent = s.title || "";
+  $("s-logline").textContent = s.logline || "";
+  const b = s.style_bible || {};
+  $("s-bible").innerHTML = Object.values(b).map(v => `<b>${v}</b>`).join("");
+  $("s-chars").innerHTML = (s.characters || [])
+    .map(c => `<div><span class="name">${c.name}</span>：${esc(c.description)}</div>`)
+    .join("");
+
+  const arc = s.story_arc || [];
+  $("arc-title").style.display = arc.length ? "block" : "none";
+  $("s-arc").innerHTML = arc.map(ch =>
+    `<li><div class="ch-title">${esc(ch.title || "")}</div>
+         <div class="ch-event">${esc(ch.event || "")}</div></li>`).join("");
+}
+
+function renderScenes(scenes, prompts) {
+  if (!scenes || !scenes.length) return;
+  $("board").style.display = "block";
+  const pmap = {};
+  (prompts || []).forEach(p => { pmap[p.scene_id] = p.prompt; });
+  $("s-scenes").innerHTML = scenes.map(sc => {
+    const tags = ["time", "camera", "emotion", "lighting"]
+      .filter(k => sc[k]).map(k => `<span class="tag">${esc(sc[k])}</span>`).join("");
+    const prompt = pmap[sc.scene_id]
+      ? `<div class="prompt">▶ ${esc(pmap[sc.scene_id])}</div>` : "";
+    return `<div class="scene">
+      <div class="head"><span class="sid">#${sc.scene_id}</span>
+        <span class="tag">${esc(sc.purpose || "")}</span>${tags}</div>
+      <div class="visual">${esc(sc.visual || "")}</div>${prompt}</div>`;
+  }).join("");
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function renderGrid(job) {
+  const render = $("render") ? true : true;
+  const total = 10;
+  const byId = {};
+  (job.images || []).forEach(im => { byId[im.scene_id] = im; });
+  const busyIndex = (job.stage && job.stage.step === 4) ? job.images.length + 1 : -1;
+
+  let html = "";
+  for (let i = 1; i <= total; i++) {
+    const im = byId[i];
+    if (im) {
+      html += `<div class="card"><span class="idx">#${i}</span>
+                 <img src="${im.url}" alt="frame ${i}" /></div>`;
+    } else {
+      const busy = (i === busyIndex) ? "busy" : "";
+      const label = busy ? "渲染中…" : "#" + i;
+      html += `<div class="card placeholder ${busy}">${label}</div>`;
+    }
+  }
+  // Only show the grid once rendering has begun (or a frame exists).
+  if ((job.images && job.images.length) || (job.stage && job.stage.step === 4)) {
+    $("grid").innerHTML = html;
+  }
+}
+
+function showError(msg) { $("err").textContent = msg; $("err").style.display = "block"; }
+</script>
+</body>
+</html>

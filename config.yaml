@@ -1,0 +1,44 @@
+# AI Horror Story Visual Generator — configuration
+# ---------------------------------------------------------------------------
+# All runtime knobs live here so the pipeline is reproducible run-to-run.
+
+deepseek:
+  # DeepSeek uses an OpenAI-compatible API.
+  # The API key is read from the DEEPSEEK_API_KEY environment variable.
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  temperature: 0.8          # story creation wants some creativity
+  analysis_temperature: 0.4 # scene / prompt work wants determinism
+
+comfyui:
+  # Address of your running ComfyUI instance.
+  host: "127.0.0.1"
+  port: 8188
+  workflow: "workflows/sdxl_horror.json"
+  # Node IDs inside the workflow JSON that the client patches per image.
+  nodes:
+    positive_prompt: "6"    # CLIP Text Encode (positive)
+    negative_prompt: "7"    # CLIP Text Encode (negative)
+    ksampler: "3"           # KSampler (seed lives here)
+    latent: "5"             # EmptyLatentImage (width / height)
+    save_image: "9"         # SaveImage (filename prefix)
+  timeout_seconds: 300
+
+generation:
+  num_key_frames: 10        # V1: 10 key frames is enough for a 10-min video
+  width: 1024
+  height: 1024
+  steps: 30
+  cfg: 6.5
+  sampler_name: "dpmpp_2m"
+  scheduler: "karras"
+  # A fixed base seed makes runs reproducible; each frame adds its index.
+  base_seed: 20260721
+
+negative_prompt: >-
+  lowres, bad anatomy, bad hands, text, error, missing fingers,
+  extra digit, fewer digits, cropped, worst quality, low quality,
+  jpeg artifacts, signature, watermark, username, blurry, cartoon,
+  anime, illustration, deformed, disfigured
+
+output_dir: "outputs"
