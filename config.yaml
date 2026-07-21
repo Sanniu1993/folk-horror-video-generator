@@ -57,6 +57,14 @@ video:
   clip_seconds: 4.0        # per-image duration (narrated mode overrides by voice length)
   crossfade_seconds: 0.6   # crossfade between clips
   mood_overlay: true       # vignette + film grain for horror atmosphere
+  tts:
+    # Narrator voice. engine "edge" = Microsoft neural voices (natural, free,
+    # needs internet); falls back to macOS `say` offline.
+    engine: "edge"
+    voice: "zh-CN-YunjianNeural"   # 云健:小说/旁白男声。其他:YunxiNeural / YunyangNeural(新闻) / XiaoxiaoNeural(女声)
+    rate: "-8%"                    # 慢一点更阴森
+    pitch: "-2Hz"
+    say_voice: "Tingting"          # offline fallback
 
 logging:
   # Console level (the file always logs at DEBUG). Override with LOG_LEVEL env.

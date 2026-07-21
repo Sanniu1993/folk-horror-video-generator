@@ -21,8 +21,13 @@ logger = logging.getLogger(__name__)
 
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
-# A macOS Chinese voice for the narrator, and a CJK font for burned-in subtitles.
-TTS_VOICE = "Tingting"
+# Narrator TTS. Default engine is edge-tts (Microsoft neural voices — far more
+# natural than macOS `say`), with `say` as an offline fallback.
+TTS_ENGINE = "edge"
+TTS_VOICE = "zh-CN-YunjianNeural"   # deep male novel/narration voice
+TTS_RATE = "-8%"                    # slightly slower = more ominous
+TTS_PITCH = "-2Hz"
+SAY_VOICE = "Tingting"              # macOS fallback voice
 SUBTITLE_FONT = "/System/Library/Fonts/STHeiti Medium.ttc"
 
 # Ken Burns movement presets, cycled per clip for variety. Expressions use
@@ -141,16 +146,52 @@ def _duration(path: Path) -> float:
     return int(h) * 3600 + int(mm) * 60 + float(s)
 
 
-def synth_narration(text: str, out_aiff: Path, voice: str = TTS_VOICE) -> float:
-    """Speak `text` with a macOS voice; return the audio duration in seconds."""
-    out_aiff.parent.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(["say", "-v", voice, text, "-o", str(out_aiff)],
-                          capture_output=True, text=True)
+def _edge_tts(text: str, out_mp3: Path, voice: str, rate: str, pitch: str) -> None:
+    import asyncio
+
+    import edge_tts
+
+    async def _go() -> None:
+        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        await comm.save(str(out_mp3))
+
+    asyncio.run(_go())
+
+
+def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]] = None):
+    """Speak `text` to an audio file; return (path, duration_seconds).
+
+    Uses edge-tts neural voices by default; falls back to macOS `say` if edge
+    fails (e.g. no internet). `out_base` is a path WITHOUT extension.
+    """
+    cfg = tts_cfg or {}
+    out_base.parent.mkdir(parents=True, exist_ok=True)
+    engine = cfg.get("engine", TTS_ENGINE)
+
+    if engine == "edge":
+        out = out_base.with_suffix(".mp3")
+        try:
+            _edge_tts(
+                text, out,
+                cfg.get("voice", TTS_VOICE),
+                cfg.get("rate", TTS_RATE),
+                cfg.get("pitch", TTS_PITCH),
+            )
+            dur = _duration(out)
+            logger.info("Narration [edge %s] (%.1fs): %s",
+                        cfg.get("voice", TTS_VOICE), dur, text[:40])
+            return out, dur
+        except Exception as exc:  # offline / network / voice error -> fall back
+            logger.warning("edge-tts failed (%s); falling back to macOS say", exc)
+
+    out = out_base.with_suffix(".aiff")
+    proc = subprocess.run(["say", "-v", cfg.get("say_voice", SAY_VOICE), text,
+                           "-o", str(out)], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"say failed: {proc.stderr[-300:]}")
-    dur = _duration(out_aiff)
-    logger.info("Narration (%.1fs): %s", dur, text[:40])
-    return dur
+    dur = _duration(out)
+    logger.info("Narration [say] (%.1fs): %s", dur, text[:40])
+    return out, dur
 
 
 def _render_subtitle_png(text: str, png: Path, width: int, height: int) -> None:
@@ -210,10 +251,11 @@ def build_narrated_video(
     work.mkdir(parents=True, exist_ok=True)
 
     # 1) TTS each line; clip length is driven by the longest line (uniform clips).
+    tts_cfg = cfg.get("tts", {})
     audios, durs = [], []
     for i, line in enumerate(lines):
-        a = work / f"a_{i:02d}.aiff"
-        durs.append(synth_narration(line, a))
+        a, dur = synth_narration(line, work / f"a_{i:02d}", tts_cfg)
+        durs.append(dur)
         audios.append(a)
     clip_dur = min(6.0, max(3.0, max(durs) + 0.9))
 

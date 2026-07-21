@@ -7,6 +7,11 @@
 
 ## 2026-07-21
 
+### 配音升级为 edge-tts 神经语音(替代机械的 macOS say)
+- **改了什么**:`video_builder.synth_narration` 默认改用 edge-tts(微软神经语音,免费无需 key),默认音色 `zh-CN-YunjianNeural`(小说/旁白男声)、语速 -8% 更阴森;macOS `say` 降级为离线兜底。config 的 `video.tts` 段可配 engine/voice/rate/pitch。
+- **为什么**:婷婷是老式拼接语音,AI 机械感重;神经语音自然度显著提升。
+- **如何验证**:单测 edge-tts 生成 mp3 正常;用 3 张现成图重建带配音视频(12.2s,视频+aac 音轨、音画同步无误)。联网失败会自动回退 say。
+
 ### 图生视频 V3-lite:Ken Burns 动效 + 讲述者配音 + 字幕
 - **改了什么**:
   - 新增 `backend/video_builder.py`:程序化动效(Ken Burns 推拉/平移,5 种预设)+ 交叉淡入 + 恐怖氛围叠加(暗角/颗粒),用 pip 自带的静态 ffmpeg(不依赖 brew);`build_video()` 出无声动效视频。
