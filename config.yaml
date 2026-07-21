@@ -52,17 +52,23 @@ output_dir: "outputs"
 
 video:
   # "Living stills" motion video (Ken Burns) — no GPU, runs on any Mac.
-  fps: 30
-  size: 1024
-  clip_seconds: 4.0        # per-image duration (narrated mode overrides by voice length)
-  crossfade_seconds: 0.6   # crossfade between clips
+  # 16:9 for YouTube long-video format.
+  out_width: 1920          # output video resolution (16:9, 1080p)
+  out_height: 1080
+  image_width: 1344        # SDXL render size for video modes (~16:9)
+  image_height: 768
+  fps: 24
+  crf: 28                  # 越大文件越小(23清晰~30更省), 28 约每分钟 10-20MB
+  grain: 3                 # 胶片颗粒强度(0关闭)。颗粒越强文件越大
+  clip_seconds: 4.0        # per-image duration (narrated modes override by voice length)
+  crossfade_seconds: 0.6
   mood_overlay: true       # vignette + film grain for horror atmosphere
   tts:
     # Narrator voice. engine "edge" = Microsoft neural voices (natural, free,
     # needs internet); falls back to macOS `say` offline.
     engine: "edge"
     voice: "zh-CN-YunjianNeural"   # 云健:小说/旁白男声。其他:YunxiNeural / YunyangNeural(新闻) / XiaoxiaoNeural(女声)
-    rate: "-8%"                    # 慢一点更阴森
+    rate: "+0%"                    # 语速。正数更快(+10%)、负数更慢(-8%)
     pitch: "-2Hz"
     say_voice: "Tingting"          # offline fallback
 

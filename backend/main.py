@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from logging_config import setup_logging
 from pipeline import ROOT, load_config, run
 from short_video import run_short_video
+from long_video import run_long_video
 
 setup_logging(load_config())
 logger = logging.getLogger(__name__)
@@ -114,7 +115,14 @@ def _run_job(
 
     cancel_event = _cancels[job_id]
     try:
-        if mode == "video":
+        if mode == "long":
+            run_long_video(
+                theme,  # in long mode the "theme" field carries the full script
+                num_images=num_frames,
+                on_event=on_event,
+                should_cancel=cancel_event.is_set,
+            )
+        elif mode == "video":
             run_short_video(
                 theme,
                 num_scenes=num_frames,
@@ -144,7 +152,7 @@ class GenerateRequest(BaseModel):
     render_images: bool = True
     num_frames: int = 10
     character_consistency: bool = False
-    mode: str = "frames"       # "frames" (storyboard) | "video" (narrated clip)
+    mode: str = "frames"       # "frames" (storyboard) | "video" (short clip) | "long" (script-driven)
 
 
 @app.post("/api/generate")
@@ -152,7 +160,8 @@ def generate(req: GenerateRequest) -> dict[str, str]:
     theme = req.theme.strip()
     if not theme:
         raise HTTPException(status_code=400, detail="theme 不能为空")
-    frames = max(1, min(10, req.num_frames))  # clamp to sane range
+    cap = 40 if req.mode == "long" else 10   # long videos allow many more images
+    frames = max(1, min(cap, req.num_frames))
     job_id = _new_job(theme, req.render_images)
     logger.info("Job %s created (mode=%s, render=%s, frames=%d, char_consistency=%s): %r",
                 job_id, req.mode, req.render_images, frames, req.character_consistency, theme)

@@ -1,16 +1,15 @@
 """Turn still key frames into a "living stills" video — no GPU needed.
 
-Uses procedural motion (Ken Burns slow zoom/pan) + crossfades + a light horror
-mood overlay (vignette + film grain), assembled with a bundled ffmpeg. This is
-deliberately NOT diffusion image-to-video: it runs fast on any Mac.
+Procedural motion (Ken Burns slow zoom/pan) + crossfades + a light horror mood
+overlay (vignette + film grain), assembled with a bundled ffmpeg. Not diffusion
+image-to-video: runs fast on any Mac.
 
-Phase 1 (this module's core): images -> silent motion video.
-Phase 2 (functions below): add narrator TTS audio + burned-in subtitles.
+Output is 16:9 (YouTube long-video format) by default. Sizes/quality/voice are
+all driven by the `video` block in config.yaml.
 """
 from __future__ import annotations
 
 import logging
-import re
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
@@ -25,119 +24,53 @@ FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 # natural than macOS `say`), with `say` as an offline fallback.
 TTS_ENGINE = "edge"
 TTS_VOICE = "zh-CN-YunjianNeural"   # deep male novel/narration voice
-TTS_RATE = "-8%"                    # slightly slower = more ominous
+TTS_RATE = "+0%"                    # narration speed (see config video.tts.rate)
 TTS_PITCH = "-2Hz"
-SAY_VOICE = "Tingting"              # macOS fallback voice
+SAY_VOICE = "Tingting"
 SUBTITLE_FONT = "/System/Library/Fonts/STHeiti Medium.ttc"
 
-# Ken Burns movement presets, cycled per clip for variety. Expressions use
-# zoompan's 'on' (output frame index) and 'IN' (total frames) placeholders.
+# Output / quality defaults (overridable via config `video`).
+DEF_W, DEF_H = 1920, 1080           # 16:9
+DEF_FPS = 24
+DEF_CRF = 28                        # higher = smaller file
+DEF_GRAIN = 3                       # film-grain strength (0 = off); big filesize driver
+
+
+def _v(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve output video params from a config `video` block."""
+    return {
+        "w": int(cfg.get("out_width", DEF_W)),
+        "h": int(cfg.get("out_height", DEF_H)),
+        "fps": int(cfg.get("fps", DEF_FPS)),
+        "crf": int(cfg.get("crf", DEF_CRF)),
+        "grain": int(cfg.get("grain", DEF_GRAIN)),
+        "mood": bool(cfg.get("mood_overlay", True)),
+        "xfade": float(cfg.get("crossfade_seconds", 0.6)),
+        "clip": float(cfg.get("clip_seconds", 4.0)),
+    }
+
+
+# Ken Burns movement presets, cycled per clip. Expressions use zoompan's 'on'
+# (output frame index); 'IN' is replaced with the clip's frame count.
 _PRESETS = [
-    # name        zoom expr                         x expr                              y expr
-    ("zoom_in",  "1.0+0.22*on/IN",                 "iw/2-(iw/zoom/2)",                 "ih/2-(ih/zoom/2)"),
-    ("zoom_out", "1.22-0.22*on/IN",                "iw/2-(iw/zoom/2)",                 "ih/2-(ih/zoom/2)"),
-    ("pan_right","1.15",                            "(iw-iw/zoom)*on/IN",               "ih/2-(ih/zoom/2)"),
-    ("pan_left", "1.15",                            "(iw-iw/zoom)*(1-on/IN)",           "ih/2-(ih/zoom/2)"),
-    ("pan_up",   "1.15",                            "iw/2-(iw/zoom/2)",                 "(ih-ih/zoom)*(1-on/IN)"),
+    ("zoom_in",  "1.0+0.18*on/IN",  "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("zoom_out", "1.18-0.18*on/IN", "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("pan_right","1.12",            "(iw-iw/zoom)*on/IN",      "ih/2-(ih/zoom/2)"),
+    ("pan_left", "1.12",            "(iw-iw/zoom)*(1-on/IN)",  "ih/2-(ih/zoom/2)"),
+    ("pan_up",   "1.12",            "iw/2-(iw/zoom/2)",        "(ih-ih/zoom)*(1-on/IN)"),
 ]
 
 
 def _run(cmd: list[str]) -> None:
-    logger.debug("ffmpeg: %s", " ".join(cmd[:6]) + " ...")
+    logger.debug("ffmpeg: %s ...", " ".join(cmd[:6]))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         logger.error("ffmpeg failed:\n%s", proc.stderr[-1500:])
         raise RuntimeError(f"ffmpeg exited {proc.returncode}")
 
 
-def _ken_burns_clip(
-    img: Path, out: Path, dur: float, fps: int, size: int, preset_idx: int, mood: bool
-) -> None:
-    frames = int(dur * fps)
-    name, zexpr, xexpr, yexpr = _PRESETS[preset_idx % len(_PRESETS)]
-    zexpr = zexpr.replace("IN", str(frames))
-    xexpr = xexpr.replace("IN", str(frames))
-    yexpr = yexpr.replace("IN", str(frames))
-    # Upscale first so zoompan panning stays smooth (avoids pixel-step jitter).
-    up = size * 4
-    vf = (
-        f"scale={up}:{up},"
-        f"zoompan=z='{zexpr}':x='{xexpr}':y='{yexpr}':d={frames}:s={size}x{size}:fps={fps}"
-    )
-    if mood:
-        vf += ",vignette=PI/4,noise=alls=7:allf=t"
-    vf += ",format=yuv420p"
-    _run([
-        FFMPEG, "-y", "-loop", "1", "-i", str(img),
-        "-t", f"{dur}", "-r", str(fps),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-pix_fmt", "yuv420p", str(out),
-    ])
-    logger.info("Ken Burns clip [%s] %.1fs -> %s", name, dur, out.name)
-
-
-def build_video(
-    images: list[Path],
-    out_path: Path,
-    video_cfg: Optional[dict[str, Any]] = None,
-) -> Path:
-    """Make a silent motion video from still images with crossfades."""
-    cfg = video_cfg or {}
-    dur = float(cfg.get("clip_seconds", 4.0))
-    fps = int(cfg.get("fps", 30))
-    size = int(cfg.get("size", 1024))
-    xfade = float(cfg.get("crossfade_seconds", 0.8))
-    mood = bool(cfg.get("mood_overlay", True))
-
-    if not images:
-        raise ValueError("No images to build a video from.")
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.parent / "_clips"
-    tmp.mkdir(exist_ok=True)
-
-    # 1) One Ken Burns clip per image.
-    clips: list[Path] = []
-    for i, img in enumerate(images):
-        clip = tmp / f"clip_{i:02d}.mp4"
-        _ken_burns_clip(img, clip, dur, fps, size, i, mood)
-        clips.append(clip)
-
-    # 2) Single clip -> just copy; otherwise crossfade-chain with xfade.
-    if len(clips) == 1:
-        out_path.write_bytes(clips[0].read_bytes())
-        _cleanup(tmp)
-        logger.info("Video built (1 clip): %s", out_path)
-        return out_path
-
-    inputs: list[str] = []
-    for c in clips:
-        inputs += ["-i", str(c)]
-    steps = []
-    prev = "[0:v]"
-    for i in range(1, len(clips)):
-        offset = i * (dur - xfade)
-        label = f"[x{i}]"
-        steps.append(
-            f"{prev}[{i}:v]xfade=transition=fade:duration={xfade}:offset={offset:.3f}{label}"
-        )
-        prev = label
-    filter_complex = ";".join(steps)
-    _run([
-        FFMPEG, "-y", *inputs,
-        "-filter_complex", filter_complex,
-        "-map", prev,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-pix_fmt", "yuv420p", str(out_path),
-    ])
-    _cleanup(tmp)
-    total = len(clips) * dur - (len(clips) - 1) * xfade
-    logger.info("Video built: %s (%d clips, ~%.1fs)", out_path, len(clips), total)
-    return out_path
-
-
 def _duration(path: Path) -> float:
-    """Read a media file's duration by parsing ffmpeg's stderr."""
+    import re
     proc = subprocess.run([FFMPEG, "-i", str(path)], capture_output=True, text=True)
     m = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", proc.stderr)
     if not m:
@@ -146,52 +79,57 @@ def _duration(path: Path) -> float:
     return int(h) * 3600 + int(mm) * 60 + float(s)
 
 
+# --- narration -------------------------------------------------------------
+
 def _edge_tts(text: str, out_mp3: Path, voice: str, rate: str, pitch: str) -> None:
     import asyncio
 
     import edge_tts
 
     async def _go() -> None:
-        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-        await comm.save(str(out_mp3))
+        await edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(str(out_mp3))
 
     asyncio.run(_go())
 
 
 def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]] = None):
-    """Speak `text` to an audio file; return (path, duration_seconds).
-
-    Uses edge-tts neural voices by default; falls back to macOS `say` if edge
-    fails (e.g. no internet). `out_base` is a path WITHOUT extension.
-    """
+    """Speak `text`; return (path, duration_seconds). edge-tts with `say` fallback."""
     cfg = tts_cfg or {}
     out_base.parent.mkdir(parents=True, exist_ok=True)
-    engine = cfg.get("engine", TTS_ENGINE)
-
-    if engine == "edge":
+    if cfg.get("engine", TTS_ENGINE) == "edge":
         out = out_base.with_suffix(".mp3")
         try:
-            _edge_tts(
-                text, out,
-                cfg.get("voice", TTS_VOICE),
-                cfg.get("rate", TTS_RATE),
-                cfg.get("pitch", TTS_PITCH),
-            )
-            dur = _duration(out)
-            logger.info("Narration [edge %s] (%.1fs): %s",
-                        cfg.get("voice", TTS_VOICE), dur, text[:40])
-            return out, dur
-        except Exception as exc:  # offline / network / voice error -> fall back
+            _edge_tts(text, out, cfg.get("voice", TTS_VOICE),
+                      cfg.get("rate", TTS_RATE), cfg.get("pitch", TTS_PITCH))
+            return out, _duration(out)
+        except Exception as exc:
             logger.warning("edge-tts failed (%s); falling back to macOS say", exc)
-
     out = out_base.with_suffix(".aiff")
     proc = subprocess.run(["say", "-v", cfg.get("say_voice", SAY_VOICE), text,
                            "-o", str(out)], capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"say failed: {proc.stderr[-300:]}")
-    dur = _duration(out)
-    logger.info("Narration [say] (%.1fs): %s", dur, text[:40])
-    return out, dur
+    return out, _duration(out)
+
+
+# --- subtitles -------------------------------------------------------------
+
+def _wrap_cjk(text: str, max_chars: int) -> list[str]:
+    """Wrap CJK text into lines of at most max_chars, preferring to break after
+    punctuation."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+    lines, cur = [], ""
+    for ch in text:
+        cur += ch
+        if len(cur) >= max_chars:
+            lines.append(cur); cur = ""
+        elif ch in "，。！？、；：…" and len(cur) >= max_chars * 0.6:
+            lines.append(cur); cur = ""
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def _render_subtitle_png(text: str, png: Path, width: int, height: int) -> None:
@@ -200,119 +138,211 @@ def _render_subtitle_png(text: str, png: Path, width: int, height: int) -> None:
 
     img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    font_size = max(28, width // 22)
+    font_size = max(30, height // 20)
     try:
         font = ImageFont.truetype(SUBTITLE_FONT, font_size)
     except OSError:
         font = ImageFont.load_default()
 
-    # Wrap by character count that fits ~86% of the width.
-    max_w = int(width * 0.86)
-    lines, cur = [], ""
-    for ch in text:
-        if draw.textlength(cur + ch, font=font) <= max_w:
-            cur += ch
-        else:
-            lines.append(cur); cur = ch
-    if cur:
-        lines.append(cur)
-
+    max_chars = max(8, int(width * 0.9 / font_size))
+    lines = _wrap_cjk(text, max_chars)
     line_h = font_size + 12
-    total_h = line_h * len(lines)
-    y0 = int(height * 0.86) - total_h
+    y0 = int(height * 0.88) - line_h * len(lines)
     for i, line in enumerate(lines):
         w = draw.textlength(line, font=font)
-        x = (width - w) / 2
-        y = y0 + i * line_h
-        # Outline for legibility over any background.
-        draw.text((x, y), line, font=font, fill=(255, 255, 255, 255),
-                  stroke_width=max(2, font_size // 14), stroke_fill=(0, 0, 0, 230))
+        draw.text(((width - w) / 2, y0 + i * line_h), line, font=font,
+                  fill=(255, 255, 255, 255), stroke_width=max(2, font_size // 14),
+                  stroke_fill=(0, 0, 0, 230))
     img.save(png)
 
 
-def build_narrated_video(
-    images: list[Path],
-    lines: list[str],
-    out_path: Path,
-    video_cfg: Optional[dict[str, Any]] = None,
-) -> Path:
-    """Ken Burns video + narrator voiceover + burned-in subtitles, synced per scene.
+# --- Ken Burns clips -------------------------------------------------------
 
-    lines[i] is spoken (TTS) and shown as a subtitle while image[i] is on screen.
-    """
+def _ken_burns_clip(img: Path, out: Path, dur: float, p: dict[str, Any], preset_idx: int) -> None:
+    frames = max(1, int(dur * p["fps"]))
+    name, z, x, y = _PRESETS[preset_idx % len(_PRESETS)]
+    z, x, y = (e.replace("IN", str(frames)) for e in (z, x, y))
+    upw, uph = p["w"] * 2, p["h"] * 2   # upscale so panning stays smooth
+    vf = (f"scale={upw}:{uph},zoompan=z='{z}':x='{x}':y='{y}':"
+          f"d={frames}:s={p['w']}x{p['h']}:fps={p['fps']}")
+    if p["mood"] and p["grain"] > 0:
+        vf += f",vignette=PI/5,noise=alls={p['grain']}:allf=t"
+    vf += ",format=yuv420p"
+    _run([FFMPEG, "-y", "-loop", "1", "-i", str(img), "-t", f"{dur}", "-r", str(p["fps"]),
+          "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]),
+          "-pix_fmt", "yuv420p", str(out)])
+    logger.info("Ken Burns clip [%s] %.1fs -> %s", name, dur, out.name)
+
+
+def build_video(images: list[Path], out_path: Path,
+                video_cfg: Optional[dict[str, Any]] = None,
+                durations: Optional[list[float]] = None) -> Path:
+    """Silent motion video with crossfades. Optional per-image durations."""
+    p = _v(video_cfg or {})
+    if not images:
+        raise ValueError("No images to build a video from.")
+    durs = durations or [p["clip"]] * len(images)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.parent / "_clips"
+    tmp.mkdir(exist_ok=True)
+
+    clips = []
+    for i, img in enumerate(images):
+        clip = tmp / f"clip_{i:03d}.mp4"
+        _ken_burns_clip(img, clip, durs[i], p, i)
+        clips.append(clip)
+
+    if len(clips) == 1:
+        out_path.write_bytes(clips[0].read_bytes())
+        _cleanup(tmp)
+        return out_path
+
+    inputs, steps, prev, start = [], [], "[0:v]", 0.0
+    for c in clips:
+        inputs += ["-i", str(c)]
+    for i in range(1, len(clips)):
+        start += durs[i - 1] - p["xfade"]
+        label = f"[x{i}]"
+        steps.append(f"{prev}[{i}:v]xfade=transition=fade:duration={p['xfade']}:"
+                     f"offset={start:.3f}{label}")
+        prev = label
+    _run([FFMPEG, "-y", *inputs, "-filter_complex", ";".join(steps), "-map", prev,
+          "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]),
+          "-pix_fmt", "yuv420p", str(out_path)])
+    _cleanup(tmp)
+    return out_path
+
+
+# --- short narrated clip (per-scene subtitle PNG overlay) ------------------
+
+def build_narrated_video(images: list[Path], lines: list[str], out_path: Path,
+                         video_cfg: Optional[dict[str, Any]] = None) -> Path:
+    p = _v(video_cfg or {})
     cfg = video_cfg or {}
-    fps = int(cfg.get("fps", 30))
-    size = int(cfg.get("size", 1024))
-    xfade = float(cfg.get("crossfade_seconds", 0.6))
     if len(images) != len(lines):
         raise ValueError("images and lines must be the same length.")
-
     work = out_path.parent / "_narr"
     work.mkdir(parents=True, exist_ok=True)
 
-    # 1) TTS each line; clip length is driven by the longest line (uniform clips).
     tts_cfg = cfg.get("tts", {})
     audios, durs = [], []
     for i, line in enumerate(lines):
         a, dur = synth_narration(line, work / f"a_{i:02d}", tts_cfg)
-        durs.append(dur)
-        audios.append(a)
+        durs.append(dur); audios.append(a)
     clip_dur = min(6.0, max(3.0, max(durs) + 0.9))
 
-    # 2) Silent Ken Burns video with uniform clip duration.
     silent = work / "silent.mp4"
-    build_video(images, silent, {**cfg, "clip_seconds": clip_dur, "crossfade_seconds": xfade})
+    build_video(images, silent, {**cfg, "clip_seconds": clip_dur})
 
-    starts = [i * (clip_dur - xfade) for i in range(len(images))]
-    total = len(images) * clip_dur - (len(images) - 1) * xfade
+    starts = [i * (clip_dur - p["xfade"]) for i in range(len(images))]
+    total = len(images) * clip_dur - (len(images) - 1) * p["xfade"]
 
-    # 3) Mixed narration track: each line delayed to its clip's start.
     audio_mix = work / "audio.m4a"
     a_inputs, a_filters, a_labels = [], [], []
     for i, a in enumerate(audios):
         a_inputs += ["-i", str(a)]
-        delay_ms = int(starts[i] * 1000)
-        a_filters.append(f"[{i}:a]adelay={delay_ms}|{delay_ms}[d{i}]")
-        a_labels.append(f"[d{i}]")
-    # apad pads with trailing silence so the audio matches the full video length
-    # (otherwise -shortest would clip the last shot's visual tail).
+        d = int(starts[i] * 1000)
+        a_filters.append(f"[{i}:a]adelay={d}|{d}[d{i}]"); a_labels.append(f"[d{i}]")
     a_filters.append(f"{''.join(a_labels)}amix=inputs={len(audios)}:normalize=0,apad[a]")
-    _run([FFMPEG, "-y", *a_inputs, "-filter_complex", ";".join(a_filters),
-          "-map", "[a]", "-t", f"{total:.3f}", "-c:a", "aac", "-b:a", "192k", str(audio_mix)])
+    _run([FFMPEG, "-y", *a_inputs, "-filter_complex", ";".join(a_filters), "-map", "[a]",
+          "-t", f"{total:.3f}", "-c:a", "aac", "-b:a", "192k", str(audio_mix)])
 
-    # 4) Subtitle PNGs, one per scene.
     subs = []
     for i, line in enumerate(lines):
-        p = work / f"sub_{i:02d}.png"
-        _render_subtitle_png(line, p, size, size)
-        subs.append(p)
+        sp = work / f"sub_{i:02d}.png"
+        _render_subtitle_png(line, sp, p["w"], p["h"]); subs.append(sp)
 
-    # 5) Overlay each subtitle during its clip, then add the audio track.
     ov_inputs, ov_steps, prev = [], [], "[0:v]"
-    for i, p in enumerate(subs):
-        ov_inputs += ["-i", str(p)]
-        s = starts[i] + 0.15
-        e = starts[i] + clip_dur - 0.15
+    for i, sp in enumerate(subs):
+        ov_inputs += ["-i", str(sp)]
+        s, e = starts[i] + 0.15, starts[i] + clip_dur - 0.15
         label = f"[o{i}]"
-        ov_steps.append(
-            f"{prev}[{i + 1}:v]overlay=0:0:enable='between(t,{s:.2f},{e:.2f})'{label}"
-        )
+        ov_steps.append(f"{prev}[{i + 1}:v]overlay=0:0:enable='between(t,{s:.2f},{e:.2f})'{label}")
         prev = label
-    audio_idx = 1 + len(subs)
-    _run([
-        FFMPEG, "-y", "-i", str(silent), *ov_inputs, "-i", str(audio_mix),
-        "-filter_complex", ";".join(ov_steps),
-        "-map", prev, "-map", f"{audio_idx}:a",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-shortest", str(out_path),
-    ])
-    for f in work.glob("*"):
-        f.unlink(missing_ok=True)
-    try:
-        work.rmdir()
-    except OSError:
-        pass
+    _run([FFMPEG, "-y", "-i", str(silent), *ov_inputs, "-i", str(audio_mix),
+          "-filter_complex", ";".join(ov_steps), "-map", prev, "-map", f"{1 + len(subs)}:a",
+          "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]), "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-shortest", str(out_path)])
+    _wipe(work)
     logger.info("Narrated video built: %s (%.1fs)", out_path, total)
+    return out_path
+
+
+# --- long narrated video (per-line SRT subtitles) --------------------------
+
+def _fmt_ass(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h:d}:{m:02d}:{s:05.2f}"
+
+
+def _ass_header(w: int, h: int, font_size: int, margin_v: int) -> str:
+    # PlayResX/Y pinned to the video size so FontSize is in real pixels
+    # (SRT would default to a 288-tall canvas and blow the font up ~3.7x).
+    return (
+        "[Script Info]\nScriptType: v4.00+\n"
+        f"PlayResX: {w}\nPlayResY: {h}\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
+        "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+        "MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,Heiti SC,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
+        f"&H64000000,1,0,0,0,100,100,0,0,1,3,0,2,{int(w*0.06)},{int(w*0.06)},{margin_v},1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+
+def build_long_video(segments: list[dict[str, Any]], out_path: Path,
+                     video_cfg: Optional[dict[str, Any]] = None) -> Path:
+    """Long narrated video: each image shown for its narration group; per-line
+    subtitles (ASS, auto-wrapped); hard cuts keep audio/subtitle/video in sync."""
+    p = _v(video_cfg or {})
+    cfg = video_cfg or {}
+    font_size = int(cfg.get("subtitle_font_size", max(28, p["h"] // 24)))
+    margin_v = int(cfg.get("subtitle_margin_v", int(p["h"] * 0.07)))
+    max_chars = max(8, int(p["w"] * 0.86 / font_size))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    work = out_path.parent / "_long"
+    work.mkdir(exist_ok=True)
+
+    clips, all_audio, events, t, idx = [], [], [], 0.0, 0
+    for i, seg in enumerate(segments):
+        seg_dur = sum(l["dur"] for l in seg["lines"]) or 2.0
+        clip = work / f"clip_{i:03d}.mp4"
+        _ken_burns_clip(seg["image"], clip, seg_dur, p, i)
+        clips.append(clip)
+        for l in seg["lines"]:
+            all_audio.append(l["audio"])
+            text = "\\N".join(_wrap_cjk(l["text"], max_chars))
+            events.append(f"Dialogue: 0,{_fmt_ass(t)},{_fmt_ass(t + l['dur'])},"
+                          f"Default,,0,0,0,,{text}")
+            idx += 1; t += l["dur"]
+
+    concat = work / "clips.txt"
+    concat.write_text("".join(f"file '{c.resolve()}'\n" for c in clips), encoding="utf-8")
+    silent = work / "silent.mp4"
+    _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(silent)])
+
+    alist = work / "audio.txt"
+    alist.write_text("".join(f"file '{a.resolve()}'\n" for a in all_audio), encoding="utf-8")
+    audio = work / "audio.m4a"
+    _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(alist),
+          "-c:a", "aac", "-b:a", "160k", str(audio)])
+
+    ass_file = work / "subs.ass"
+    ass_file.write_text(_ass_header(p["w"], p["h"], font_size, margin_v) + "\n".join(events) + "\n",
+                        encoding="utf-8")
+    subs = f"ass={ass_file.as_posix()}:fontsdir=/System/Library/Fonts"
+    _run([FFMPEG, "-y", "-i", str(silent), "-i", str(audio), "-vf", subs,
+          "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "medium",
+          "-crf", str(p["crf"]), "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(out_path)])
+    _wipe(work)
+    logger.info("Long video built: %s (%.1fs, %d images, %d subtitle lines)",
+                out_path, t, len(segments), idx)
     return out_path
 
 
@@ -325,8 +355,16 @@ def _cleanup(tmp: Path) -> None:
         pass
 
 
-if __name__ == "__main__":  # quick manual test: python video_builder.py img1 img2 ...
+def _wipe(d: Path) -> None:
+    for f in d.glob("*"):
+        f.unlink(missing_ok=True)
+    try:
+        d.rmdir()
+    except OSError:
+        pass
+
+
+if __name__ == "__main__":
     import sys
     logging.basicConfig(level=logging.INFO)
-    imgs = [Path(p) for p in sys.argv[1:-1]]
-    build_video(imgs, Path(sys.argv[-1]))
+    build_video([Path(x) for x in sys.argv[1:-1]], Path(sys.argv[-1]))

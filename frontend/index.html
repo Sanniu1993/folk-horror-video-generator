@@ -145,14 +145,15 @@
         <select id="frames">
           <option>1</option><option>2</option><option>3</option><option>4</option>
           <option>5</option><option>6</option><option>8</option>
-          <option selected>10</option>
+          <option selected>10</option><option>15</option><option>20</option><option>25</option>
         </select>
       </label>
       <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片</label>
       <label class="chk"><input type="checkbox" id="charc" /> 人物一致 (IPAdapter)</label>
       <label class="chk"><input type="checkbox" id="videomode" /> 🎬 短视频模式（配音+字幕）</label>
+      <label class="chk"><input type="checkbox" id="longmode" /> 📖 长片模式（粘贴朗读稿）</label>
     </div>
-    <div class="hint">调试建议：先把「分镜图数量」调小（如 2–3 张）快速验证风格与人物，满意后再出全 10 张。短视频模式下该数字即镜头数。</div>
+    <div class="hint">调试建议：分镜数调小（2–3 张）可快速验证风格与人物。<b>长片模式</b>：把完整朗读稿粘到上面输入框，分镜数即关键图数量（如 25），逐句配字幕、按 10 分钟成片。</div>
   </div>
 
   <div class="status" id="status">
@@ -222,7 +223,7 @@ async function start() {
   const render = $("render").checked;
   const frames = parseInt($("frames").value, 10) || 10;
   const charConsistency = $("charc").checked;
-  const mode = $("videomode").checked ? "video" : "frames";
+  const mode = $("longmode").checked ? "long" : ($("videomode").checked ? "video" : "frames");
   expectedFrames = frames;
 
   $("err").style.display = "none";

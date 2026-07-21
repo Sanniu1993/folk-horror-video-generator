@@ -81,6 +81,9 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None) -> P
     setup_logging(config)
     ds = DeepSeekClient(config["deepseek"])
     gen_cfg = config["generation"]
+    vcfg = config.get("video", {})
+    img_w = vcfg.get("image_width", gen_cfg["width"])
+    img_h = vcfg.get("image_height", gen_cfg["height"])
 
     logger.info("=== Short video | theme=%r | scenes=%d ===", theme, num_scenes)
     run_dir = None
@@ -116,8 +119,8 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None) -> P
                 positive=prompt,
                 negative=config["negative_prompt"],
                 seed=gen_cfg["base_seed"] + i,
-                width=gen_cfg["width"],
-                height=gen_cfg["height"],
+                width=img_w,
+                height=img_h,
                 gen_cfg=gen_cfg,
                 filename_prefix=f"shot_{i:02d}",
                 out_dir=run_dir / "images",
