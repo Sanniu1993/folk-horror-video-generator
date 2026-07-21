@@ -12,6 +12,7 @@ Then open http://127.0.0.1:8000
 """
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from pathlib import Path
@@ -22,7 +23,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from pipeline import ROOT, run
+from logging_config import setup_logging
+from pipeline import ROOT, load_config, run
+
+setup_logging(load_config())
+logger = logging.getLogger(__name__)
 
 OUTPUTS_DIR = ROOT / "outputs"
 FRONTEND_DIR = ROOT / "frontend"
@@ -56,12 +61,19 @@ def _new_job(theme: str, render_images: bool) -> str:
             "scenes": None,
             "prompts": None,
             "images": [],            # [{scene_id,file,meta}]
+            "characters": [],        # [{name,url}] reference portraits
             "error": None,
         }
     return job_id
 
 
-def _run_job(job_id: str, theme: str, render_images: bool) -> None:
+def _run_job(
+    job_id: str,
+    theme: str,
+    render_images: bool,
+    num_frames: int,
+    character_consistency: bool,
+) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
             job = _jobs[job_id]
@@ -75,6 +87,10 @@ def _run_job(job_id: str, theme: str, render_images: bool) -> None:
                 job["scenes"] = payload
             elif event == "prompts":
                 job["prompts"] = payload
+            elif event == "character_ref_done":
+                job["characters"].append(
+                    {"name": payload["name"], "url": f"/outputs/{payload['file']}"}
+                )
             elif event == "frame_done":
                 job["images"].append(
                     {
@@ -98,6 +114,8 @@ def _run_job(job_id: str, theme: str, render_images: bool) -> None:
             render_images=render_images,
             on_event=on_event,
             should_cancel=cancel_event.is_set,
+            num_frames=num_frames,
+            character_consistency=character_consistency,
         )
         with _lock:
             if _jobs[job_id]["status"] == "running":
@@ -111,6 +129,8 @@ def _run_job(job_id: str, theme: str, render_images: bool) -> None:
 class GenerateRequest(BaseModel):
     theme: str
     render_images: bool = True
+    num_frames: int = 10
+    character_consistency: bool = False
 
 
 @app.post("/api/generate")
@@ -118,9 +138,14 @@ def generate(req: GenerateRequest) -> dict[str, str]:
     theme = req.theme.strip()
     if not theme:
         raise HTTPException(status_code=400, detail="theme 不能为空")
+    frames = max(1, min(10, req.num_frames))  # clamp to sane range
     job_id = _new_job(theme, req.render_images)
+    logger.info("Job %s created (render=%s, frames=%d, char_consistency=%s): %r",
+                job_id, req.render_images, frames, req.character_consistency, theme)
     threading.Thread(
-        target=_run_job, args=(job_id, theme, req.render_images), daemon=True
+        target=_run_job,
+        args=(job_id, theme, req.render_images, frames, req.character_consistency),
+        daemon=True,
     ).start()
     return {"job_id": job_id}
 
@@ -135,6 +160,7 @@ def cancel_job(job_id: str) -> dict[str, str]:
         event.set()  # pipeline checks this between/within stages
         if job["status"] == "running":
             job["stage"] = {**(job.get("stage") or {}), "label": "正在停止…"}
+    logger.info("Job %s: cancel requested", job_id)
     return {"status": "cancelling"}
 
 

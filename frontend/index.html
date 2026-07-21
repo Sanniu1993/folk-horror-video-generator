@@ -36,6 +36,16 @@
   textarea:focus { outline: none; border-color: var(--accent-2); }
   .row { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   label.chk { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; opacity: .8; }
+  .refs { display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 18px; margin-top: 18px; }
+  .refs .section-title { margin-top: 0; }
+  .refs .row2 { display: flex; gap: 12px; flex-wrap: wrap; }
+  .refs figure { margin: 0; width: 120px; }
+  .refs img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+  .refs figcaption { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; }
   button {
     background: var(--accent); color: #fff; border: none; border-radius: 8px;
     padding: 11px 22px; font-size: 15px; cursor: pointer; letter-spacing: 1px;
@@ -128,8 +138,17 @@
     <div class="row">
       <button id="go">生成</button>
       <button id="stop" class="stop" style="display:none">■ 停止</button>
-      <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片（关掉则只出文本，几秒完成）</label>
+      <label class="chk">分镜图数量
+        <select id="frames">
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option><option>8</option>
+          <option selected>10</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片</label>
+      <label class="chk"><input type="checkbox" id="charc" /> 人物一致 (IPAdapter)</label>
     </div>
+    <div class="hint">调试建议：先把「分镜图数量」调小（如 2–3 张）快速验证风格与人物，满意后再出全 10 张。</div>
   </div>
 
   <div class="status" id="status">
@@ -146,6 +165,11 @@
 
     <div class="section-title" id="arc-title" style="display:none">剧情</div>
     <ol class="arc" id="s-arc"></ol>
+  </div>
+
+  <div class="refs" id="refs">
+    <div class="section-title">角色参考图（IPAdapter 一致性锚点）</div>
+    <div class="row2" id="s-refs"></div>
   </div>
 
   <div class="board" id="board">
@@ -181,14 +205,21 @@ async function stop() {
   } catch (e) { /* the poll loop will reflect the final state */ }
 }
 
+let expectedFrames = 10;
+
 async function start() {
   const theme = $("theme").value.trim();
   if (!theme) { $("theme").focus(); return; }
   const render = $("render").checked;
+  const frames = parseInt($("frames").value, 10) || 10;
+  const charConsistency = $("charc").checked;
+  expectedFrames = frames;
 
   $("err").style.display = "none";
   $("story").style.display = "none";
   $("board").style.display = "none";
+  $("refs").style.display = "none";
+  $("s-refs").innerHTML = "";
   $("s-scenes").innerHTML = "";
   $("grid").innerHTML = "";
   $("status").style.display = "block";
@@ -202,7 +233,10 @@ async function start() {
     const r = await fetch("/api/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ theme, render_images: render }),
+      body: JSON.stringify({
+        theme, render_images: render,
+        num_frames: frames, character_consistency: charConsistency,
+      }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
     job_id = (await r.json()).job_id;
@@ -225,6 +259,7 @@ async function poll(job_id) {
 
   if (job.stage) renderStages(job.stage);
   if (job.story) renderStory(job.story);
+  if (job.characters && job.characters.length) renderRefs(job.characters);
   if (job.scenes) renderScenes(job.scenes, job.prompts);
   renderGrid(job);
 
@@ -293,9 +328,15 @@ function esc(s) {
   return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+function renderRefs(characters) {
+  $("refs").style.display = "block";
+  $("s-refs").innerHTML = characters.map(c =>
+    `<figure><img src="${c.url}" alt="${esc(c.name)}" />
+       <figcaption>${esc(c.name)}</figcaption></figure>`).join("");
+}
+
 function renderGrid(job) {
-  const render = $("render") ? true : true;
-  const total = 10;
+  const total = (job.prompts && job.prompts.length) || expectedFrames;
   const byId = {};
   (job.images || []).forEach(im => { byId[im.scene_id] = im; });
   const busyIndex = (job.stage && job.stage.step === 4) ? job.images.length + 1 : -1;

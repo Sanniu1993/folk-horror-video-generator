@@ -22,6 +22,13 @@ comfyui:
     ksampler: "3"           # KSampler (seed lives here)
     latent: "5"             # EmptyLatentImage (width / height)
     save_image: "9"         # SaveImage (filename prefix)
+  # IPAdapter variant: base workflow + reference-image conditioning for
+  # character consistency. Shares the node ids above; adds the two below.
+  workflow_ipadapter: "workflows/sdxl_ipadapter.json"
+  nodes_ipadapter:
+    load_image: "10"        # LoadImage (character reference)
+    ipadapter: "12"         # IPAdapterAdvanced (weight lives here)
+  ipadapter_weight: 0.75    # 0.5 loose .. 1.0 strong face lock
   timeout_seconds: 300
 
 generation:
@@ -42,3 +49,10 @@ negative_prompt: >-
   anime, illustration, deformed, disfigured
 
 output_dir: "outputs"
+
+logging:
+  # Console level (the file always logs at DEBUG). Override with LOG_LEVEL env.
+  level: "INFO"           # DEBUG | INFO | WARNING | ERROR
+  file: "app.log"         # written under logs/
+  max_bytes: 5000000      # rotate at ~5 MB
+  backup_count: 3         # keep app.log.1 .. app.log.3

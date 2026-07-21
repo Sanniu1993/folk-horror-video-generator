@@ -6,11 +6,15 @@ JSON-mode handling, retries and error reporting live in a single place.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 def _load_dotenv() -> None:
@@ -79,20 +83,35 @@ class DeepSeekClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        logger.debug(
+            "DeepSeek request: model=%s temp=%s system=%dch user=%dch",
+            self.model, temperature, len(system), len(user),
+        )
+        started = time.monotonic()
         resp = requests.post(
             f"{self.base_url}/chat/completions",
             headers=headers,
             json=payload,
             timeout=120,
         )
+        elapsed = time.monotonic() - started
         if resp.status_code != 200:
+            logger.error("DeepSeek HTTP %s in %.1fs: %s", resp.status_code, elapsed, resp.text[:300])
             raise DeepSeekError(
                 f"DeepSeek returned {resp.status_code}: {resp.text[:500]}"
             )
-        content = resp.json()["choices"][0]["message"]["content"]
+        body = resp.json()
+        content = body["choices"][0]["message"]["content"]
+        usage = body.get("usage", {})
+        logger.info(
+            "DeepSeek ok in %.1fs (%dch out, tokens=%s)",
+            elapsed, len(content), usage.get("total_tokens", "?"),
+        )
+        logger.debug("DeepSeek raw content: %s", content[:1000])
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
+            logger.error("DeepSeek returned non-JSON (%dch): %s", len(content), content[:500])
             raise DeepSeekError(
                 f"Model did not return valid JSON:\n{content[:500]}"
             ) from exc

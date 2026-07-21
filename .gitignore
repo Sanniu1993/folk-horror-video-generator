@@ -10,6 +10,9 @@ __pycache__/
 outputs/*/
 !outputs/.gitkeep
 
+# logs
+logs/
+
 # os / editor
 .DS_Store
 .idea/
