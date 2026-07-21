@@ -52,12 +52,15 @@ def plan_scenes(
     num_frames: int = 10,
     duration_minutes: int = 10,
     temperature: float = 0.4,
+    art_positive: str = "",
 ) -> list[dict[str, Any]]:
+    from prompt_generator import art_note
     system = SYSTEM.format(n=num_frames, duration=duration_minutes)
     user = (
         "Structured story:\n"
         + json.dumps(story, ensure_ascii=False, indent=2)
         + f"\n\nProduce exactly {num_frames} key-frame scenes now."
+        + art_note(art_positive)
     )
     result = client.chat_json(system, user, temperature=temperature)
     scenes = result.get("scenes", [])

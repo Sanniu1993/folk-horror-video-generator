@@ -50,6 +50,13 @@ negative_prompt: >-
 
 output_dir: "outputs"
 
+# 画面约束 / 美术设定 —— 约束年代、地域、服饰、建筑、道具等"世界设定"。
+# 双管注入:① 喂给 DeepSeek 规划(融入角色/场景/提示词);② 兜底拼进 SDXL 提示词。
+# 网页"美术设定"输入框可临时覆盖;留空则用这里的默认。
+art_direction:
+  positive: ""    # 要什么。例:1990年代贵州偏远山村，土坯木屋，泥路，油灯，村民穿洗旧的深蓝灰色粗布衣布鞋
+  negative: ""    # 不要什么(拼进 negative)。例:现代汽车, 智能手机, 现代服装, 霓虹灯, 高楼, 塑料制品, 西式建筑
+
 video:
   # "Living stills" motion video (Ken Burns) — no GPU, runs on any Mac.
   # 16:9 for YouTube long-video format.

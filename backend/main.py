@@ -77,6 +77,8 @@ def _run_job(
     num_frames: int,
     character_consistency: bool,
     mode: str = "frames",
+    art_positive: str = "",
+    art_negative: str = "",
 ) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
@@ -121,6 +123,8 @@ def _run_job(
                 num_images=num_frames,
                 on_event=on_event,
                 should_cancel=cancel_event.is_set,
+                art_positive=art_positive,
+                art_negative=art_negative,
             )
         elif mode == "video":
             run_short_video(
@@ -128,6 +132,8 @@ def _run_job(
                 num_scenes=num_frames,
                 on_event=on_event,
                 should_cancel=cancel_event.is_set,
+                art_positive=art_positive,
+                art_negative=art_negative,
             )
         else:
             run(
@@ -137,6 +143,8 @@ def _run_job(
                 should_cancel=cancel_event.is_set,
                 num_frames=num_frames,
                 character_consistency=character_consistency,
+                art_positive=art_positive,
+                art_negative=art_negative,
             )
         with _lock:
             if _jobs[job_id]["status"] == "running":
@@ -153,6 +161,8 @@ class GenerateRequest(BaseModel):
     num_frames: int = 10
     character_consistency: bool = False
     mode: str = "frames"       # "frames" (storyboard) | "video" (short clip) | "long" (script-driven)
+    art_positive: str = ""     # 画面约束(要什么);空则用 config 默认
+    art_negative: str = ""     # 画面约束(不要什么)
 
 
 @app.post("/api/generate")
@@ -167,7 +177,8 @@ def generate(req: GenerateRequest) -> dict[str, str]:
                 job_id, req.mode, req.render_images, frames, req.character_consistency, theme)
     threading.Thread(
         target=_run_job,
-        args=(job_id, theme, req.render_images, frames, req.character_consistency, req.mode),
+        args=(job_id, theme, req.render_images, frames, req.character_consistency, req.mode,
+              req.art_positive, req.art_negative),
         daemon=True,
     ).start()
     return {"job_id": job_id}

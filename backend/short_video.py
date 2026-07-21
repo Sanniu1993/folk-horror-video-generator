@@ -55,9 +55,12 @@ Rules:
 """
 
 
-def generate_short_story(client: DeepSeekClient, theme: str, num_scenes: int) -> dict[str, Any]:
+def generate_short_story(client: DeepSeekClient, theme: str, num_scenes: int,
+                         art_positive: str = "") -> dict[str, Any]:
+    from prompt_generator import art_note
     system = SYSTEM.format(n=num_scenes)
-    story = client.chat_json(system, f"主题:{theme}\n\n现在生成这个极短故事。", temperature=0.7)
+    user = f"主题:{theme}\n\n现在生成这个极短故事。" + art_note(art_positive)
+    story = client.chat_json(system, user, temperature=0.7)
     scenes = story.get("scenes", [])[:num_scenes]
     if not scenes:
         raise ValueError("Short story has no scenes.")
@@ -65,7 +68,8 @@ def generate_short_story(client: DeepSeekClient, theme: str, num_scenes: int) ->
     return story
 
 
-def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None) -> Path:
+def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None,
+                    art_positive="", art_negative="") -> Path:
     def emit(event, payload):
         if on_event:
             try:
@@ -84,13 +88,17 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None) -> P
     vcfg = config.get("video", {})
     img_w = vcfg.get("image_width", gen_cfg["width"])
     img_h = vcfg.get("image_height", gen_cfg["height"])
+    art = config.get("art_direction", {})
+    art_pos = (art_positive or "").strip() or art.get("positive", "")
+    art_neg = (art_negative or "").strip() or art.get("negative", "")
+    negative = config["negative_prompt"] + ((", " + art_neg.strip()) if art_neg.strip() else "")
 
     logger.info("=== Short video | theme=%r | scenes=%d ===", theme, num_scenes)
     run_dir = None
     try:
         check_cancel()
         emit("stage", {"step": 1, "total": 3, "label": "故事创作"})
-        story = generate_short_story(ds, theme, num_scenes)
+        story = generate_short_story(ds, theme, num_scenes, art_positive=art_pos)
         suffix = _style_suffix(story.get("style_bible", {}))
 
         run_dir = ROOT / config["output_dir"] / f"{datetime.now():%Y%m%d_%H%M%S}_{_slugify(story['title'])}_short"
@@ -112,12 +120,12 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None) -> P
         total = len(story["scenes"])
         for i, sc in enumerate(story["scenes"]):
             check_cancel()
-            prompt = f"{sc['prompt']}, {suffix}"
+            prompt = ", ".join([sc["prompt"]] + ([art_pos] if art_pos else []) + [suffix])
             logger.info("Rendering shot %d/%d", i + 1, total)
             emit("frame_start", {"scene_id": i + 1, "index": i + 1, "total": total})
             dest = comfy.generate(
                 positive=prompt,
-                negative=config["negative_prompt"],
+                negative=negative,
                 seed=gen_cfg["base_seed"] + i,
                 width=img_w,
                 height=img_h,

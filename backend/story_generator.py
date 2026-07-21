@@ -69,8 +69,10 @@ Rules:
 """
 
 
-def generate_story(client: DeepSeekClient, theme: str, temperature: float = 0.8) -> dict[str, Any]:
-    user = f"Story theme: {theme}\n\nCreate the structured story now."
+def generate_story(client: DeepSeekClient, theme: str, temperature: float = 0.8,
+                   art_positive: str = "") -> dict[str, Any]:
+    from prompt_generator import art_note
+    user = f"Story theme: {theme}\n\nCreate the structured story now." + art_note(art_positive)
     story = client.chat_json(SYSTEM, user, temperature=temperature)
     _validate(story)
     return story

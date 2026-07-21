@@ -34,6 +34,17 @@ Return this schema:
 """
 
 
+def art_note(art_positive: str) -> str:
+    """Instruction block injecting the user's art direction into a DeepSeek call."""
+    art_positive = (art_positive or "").strip()
+    if not art_positive:
+        return ""
+    return (
+        "\n\n【美术设定 / ART DIRECTION — 必须严格遵守，融入每个角色描述、场景与提示词，"
+        "年代/服饰/建筑/道具都要符合】\n" + art_positive
+    )
+
+
 def _style_suffix(style: dict[str, Any]) -> str:
     """The fixed tail appended to every prompt — this is the Style Bible."""
     parts = [
@@ -52,6 +63,7 @@ def generate_prompts(
     story: dict[str, Any],
     scenes: list[dict[str, Any]],
     temperature: float = 0.4,
+    art_positive: str = "",
 ) -> list[dict[str, Any]]:
     characters = story.get("characters", [])
     char_block = "\n".join(f'- {c["name"]}: {c["description"]}' for c in characters)
@@ -62,20 +74,24 @@ def generate_prompts(
         "Scenes:\n"
         + json.dumps(scenes, ensure_ascii=False, indent=2)
         + "\n\nWrite one scene-only prompt per scene now."
+        + art_note(art_positive)
     )
     result = client.chat_json(SYSTEM, user, temperature=temperature)
 
     raw = {p["scene_id"]: p["prompt"] for p in result.get("prompts", [])}
     suffix = _style_suffix(story.get("style_bible", {}))
+    art = (art_positive or "").strip()
 
     final: list[dict[str, Any]] = []
     for scene in scenes:
         sid = scene["scene_id"]
         scene_prompt = raw.get(sid, scene.get("visual", ""))
+        # SDXL fallback: append the art direction to the final prompt as a guarantee.
+        parts = [scene_prompt] + ([art] if art else []) + [suffix]
         final.append(
             {
                 "scene_id": sid,
-                "prompt": f"{scene_prompt}, {suffix}",
+                "prompt": ", ".join(parts),
                 "scene_prompt": scene_prompt,
                 "meta": {
                     "chapter": scene.get("chapter"),

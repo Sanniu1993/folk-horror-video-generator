@@ -58,6 +58,8 @@ def run(
     should_cancel: CancelHook = None,
     num_frames: Optional[int] = None,
     character_consistency: bool = False,
+    art_positive: str = "",
+    art_negative: str = "",
 ) -> Path:
     def emit(event: str, payload: Any) -> None:
         if on_event is not None:
@@ -75,6 +77,11 @@ def run(
     ds_cfg = config["deepseek"]
     gen_cfg = config["generation"]
 
+    art = config.get("art_direction", {})
+    art_pos = (art_positive or "").strip() or art.get("positive", "")
+    art_neg = (art_negative or "").strip() or art.get("negative", "")
+    negative = config["negative_prompt"] + ((", " + art_neg.strip()) if art_neg.strip() else "")
+
     frames = int(num_frames) if num_frames else gen_cfg["num_key_frames"]
     logger.info(
         "=== Run start | theme=%r | render=%s | frames=%d | char_consistency=%s ===",
@@ -90,7 +97,8 @@ def run(
         # --- Step 1: structured story + style bible ----------------------
         logger.info("[1/4] Story creation for theme: %r", theme)
         emit("stage", {"step": 1, "total": 4, "label": "故事创作"})
-        story = generate_story(ds, theme, temperature=ds_cfg.get("temperature", 0.8))
+        story = generate_story(ds, theme, temperature=ds_cfg.get("temperature", 0.8),
+                               art_positive=art_pos)
 
         run_dir = (
             ROOT
@@ -113,6 +121,7 @@ def run(
             story,
             num_frames=frames,
             temperature=ds_cfg.get("analysis_temperature", 0.4),
+            art_positive=art_pos,
         )
         _dump(run_dir / "scenes.json", {"scenes": scenes})
         logger.info("      -> %d scenes", len(scenes))
@@ -123,7 +132,8 @@ def run(
         logger.info("[3/4] Prompt generation")
         emit("stage", {"step": 3, "total": 4, "label": "Prompt 生成"})
         prompts = generate_prompts(
-            ds, story, scenes, temperature=ds_cfg.get("analysis_temperature", 0.4)
+            ds, story, scenes, temperature=ds_cfg.get("analysis_temperature", 0.4),
+            art_positive=art_pos,
         )
         _dump(run_dir / "prompts.json", {"prompts": prompts})
         emit("prompts", prompts)
@@ -182,7 +192,7 @@ def run(
             try:
                 dest = comfy.generate(
                     positive=p["prompt"],
-                    negative=config["negative_prompt"],
+                    negative=negative,
                     seed=seed,
                     width=gen_cfg["width"],
                     height=gen_cfg["height"],

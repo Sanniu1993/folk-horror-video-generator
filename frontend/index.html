@@ -39,6 +39,10 @@
   select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 4px 8px; font-size: 13px; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 10px; opacity: .8; }
+  details.art { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+  details.art summary { cursor: pointer; color: var(--accent-2); font-size: 13px; }
+  details.art textarea { min-height: 44px; margin-top: 4px; }
+  .alabel { display: block; color: var(--muted); font-size: 12px; margin-top: 10px; }
   .videobox { display: none; background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px; margin-top: 18px; }
   .videobox video { width: 100%; max-width: 640px; border-radius: 8px; display: block; margin: 0 auto; background: #000; }
@@ -154,6 +158,15 @@
       <label class="chk"><input type="checkbox" id="longmode" /> 📖 长片模式（粘贴朗读稿）</label>
     </div>
     <div class="hint">调试建议：分镜数调小（2–3 张）可快速验证风格与人物。<b>长片模式</b>：把完整朗读稿粘到上面输入框，分镜数即关键图数量（如 25），逐句配字幕、按 10 分钟成片。</div>
+
+    <details class="art">
+      <summary>🎨 美术设定（约束画面：年代 / 服饰 / 环境 / 道具）</summary>
+      <label class="alabel">要什么（正向）</label>
+      <textarea id="artpos" rows="2" placeholder="例如：1990年代贵州偏远山村，土坯木屋，泥路，油灯，村民穿洗旧的深蓝灰色粗布衣布鞋"></textarea>
+      <label class="alabel">不要什么（负向）</label>
+      <textarea id="artneg" rows="2" placeholder="例如：现代汽车, 智能手机, 现代服装, 霓虹灯, 高楼, 塑料制品, 西式建筑"></textarea>
+      <div class="hint">留空则用 config.yaml 的默认设定。约束会同时喂给 AI 规划并兜底拼进图片提示词。</div>
+    </details>
   </div>
 
   <div class="status" id="status">
@@ -250,6 +263,7 @@ async function start() {
       body: JSON.stringify({
         theme, render_images: render,
         num_frames: frames, character_consistency: charConsistency, mode,
+        art_positive: $("artpos").value, art_negative: $("artneg").value,
       }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
