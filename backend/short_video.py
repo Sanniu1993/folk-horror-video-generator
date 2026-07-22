@@ -69,7 +69,7 @@ def generate_short_story(client: DeepSeekClient, theme: str, num_scenes: int,
 
 
 def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None,
-                    art_positive="", art_negative="") -> Path:
+                    art_positive="", art_negative="", style="horror") -> Path:
     def emit(event, payload):
         if on_event:
             try:
@@ -88,10 +88,11 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None,
     vcfg = config.get("video", {})
     img_w = vcfg.get("image_width", gen_cfg["width"])
     img_h = vcfg.get("image_height", gen_cfg["height"])
+    from prompt_generator import to_english_fragment
     art = config.get("art_direction", {})
-    art_pos = (art_positive or "").strip() or art.get("positive", "")
-    art_neg = (art_negative or "").strip() or art.get("negative", "")
-    negative = config["negative_prompt"] + ((", " + art_neg.strip()) if art_neg.strip() else "")
+    art_pos = to_english_fragment(ds, (art_positive or "").strip() or art.get("positive", ""))
+    art_neg = to_english_fragment(ds, (art_negative or "").strip() or art.get("negative", ""))
+    negative = config["negative_prompt"] + ((", " + art_neg) if art_neg.strip() else "")
 
     logger.info("=== Short video | theme=%r | scenes=%d ===", theme, num_scenes)
     run_dir = None
@@ -99,7 +100,7 @@ def run_short_video(theme, num_scenes=3, on_event=None, should_cancel=None,
         check_cancel()
         emit("stage", {"step": 1, "total": 3, "label": "故事创作"})
         story = generate_short_story(ds, theme, num_scenes, art_positive=art_pos)
-        suffix = _style_suffix(story.get("style_bible", {}))
+        suffix = _style_suffix(story.get("style_bible", {}), style)
 
         run_dir = ROOT / config["output_dir"] / f"{datetime.now():%Y%m%d_%H%M%S}_{_slugify(story['title'])}_short"
         (run_dir / "images").mkdir(parents=True, exist_ok=True)

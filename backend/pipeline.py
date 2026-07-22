@@ -31,7 +31,7 @@ import yaml
 from comfy_client import ComfyClient, RunCancelled
 from deepseek_client import DeepSeekClient
 from logging_config import setup_logging
-from prompt_generator import _style_suffix, generate_prompts
+from prompt_generator import _style_suffix, generate_prompts, to_english_fragment
 from scene_planner import plan_scenes
 from story_generator import generate_story
 
@@ -60,6 +60,7 @@ def run(
     character_consistency: bool = False,
     art_positive: str = "",
     art_negative: str = "",
+    style: str = "horror",
 ) -> Path:
     def emit(event: str, payload: Any) -> None:
         if on_event is not None:
@@ -80,7 +81,6 @@ def run(
     art = config.get("art_direction", {})
     art_pos = (art_positive or "").strip() or art.get("positive", "")
     art_neg = (art_negative or "").strip() or art.get("negative", "")
-    negative = config["negative_prompt"] + ((", " + art_neg.strip()) if art_neg.strip() else "")
 
     frames = int(num_frames) if num_frames else gen_cfg["num_key_frames"]
     logger.info(
@@ -89,6 +89,11 @@ def run(
     )
     t0 = time.monotonic()
     ds = DeepSeekClient(ds_cfg)
+    # Chinese art-direction input is auto-translated to English so it works in
+    # both the DeepSeek planning and the SDXL prompt/negative layers.
+    art_pos = to_english_fragment(ds, art_pos)
+    art_neg = to_english_fragment(ds, art_neg)
+    negative = config["negative_prompt"] + ((", " + art_neg) if art_neg.strip() else "")
     run_dir: Path | None = None
 
     try:
@@ -133,7 +138,7 @@ def run(
         emit("stage", {"step": 3, "total": 4, "label": "Prompt 生成"})
         prompts = generate_prompts(
             ds, story, scenes, temperature=ds_cfg.get("analysis_temperature", 0.4),
-            art_positive=art_pos,
+            art_positive=art_pos, style=style,
         )
         _dump(run_dir / "prompts.json", {"prompts": prompts})
         emit("prompts", prompts)
@@ -169,7 +174,7 @@ def run(
                                "is not available; rendering without it.")
             else:
                 char_refs = _generate_character_refs(
-                    comfy, story, run_dir, gen_cfg, config, should_cancel, emit
+                    comfy, story, run_dir, gen_cfg, config, should_cancel, emit, style
                 )
         # Which characters appear in each scene (for picking a reference).
         chars_by_scene = {sc["scene_id"]: sc.get("characters", []) for sc in scenes}
@@ -239,11 +244,12 @@ def _generate_character_refs(
     config: dict[str, Any],
     should_cancel: CancelHook,
     emit: Callable[[str, Any], None],
+    style: str = "horror",
 ) -> dict[str, Path]:
     """Render one clean portrait per character to use as an IPAdapter reference."""
     refs: dict[str, Path] = {}
     chars_dir = run_dir / "characters"
-    suffix = _style_suffix(story.get("style_bible", {}))
+    suffix = _style_suffix(story.get("style_bible", {}), style)
     characters = story.get("characters", [])
     for idx, c in enumerate(characters):
         if should_cancel is not None and should_cancel():

@@ -34,6 +34,36 @@ Return this schema:
 """
 
 
+import re as _re
+
+_CJK = _re.compile(r"[一-鿿]")
+
+
+def _has_cjk(s: str) -> bool:
+    return bool(_CJK.search(s or ""))
+
+
+def to_english_fragment(client, text: str) -> str:
+    """If the text contains Chinese, translate it into a concise English,
+    comma-separated prompt fragment (so it works in the SDXL layer). English or
+    empty input is returned unchanged. One cheap DeepSeek call when needed."""
+    text = (text or "").strip()
+    if not text or not _has_cjk(text):
+        return text
+    try:
+        res = client.chat_json(
+            "你把用户给的画面/美术约束翻译成简洁的英文关键词短语(逗号分隔),"
+            "供图像模型提示词使用。保留具体的年代/服饰/环境/道具信息。"
+            '只输出 JSON:{"english": "..."}',
+            text,
+            temperature=0.2,
+            max_tokens=512,
+        )
+        return (res.get("english") or text).strip()
+    except Exception:
+        return text  # fall back to the original if translation fails
+
+
 def art_note(art_positive: str) -> str:
     """Instruction block injecting the user's art direction into a DeepSeek call."""
     art_positive = (art_positive or "").strip()
@@ -45,8 +75,24 @@ def art_note(art_positive: str) -> str:
     )
 
 
-def _style_suffix(style: dict[str, Any]) -> str:
-    """The fixed tail appended to every prompt — this is the Style Bible."""
+# 可选风格档:控制拼到每张图末尾的风格尾巴。
+#   horror  -> 用故事自动生成的画风 + 电影恐怖尾巴(默认,保持原行为)
+#   realistic -> 纪实摄影,不加恐怖调,适合"80年代农民/护士"等通用/年代题材
+#   none    -> 不加任何风格尾巴,纯 prompt(+ 美术设定)
+STYLE_PROFILES = {
+    "horror": None,  # None 表示走下面的 style_bible 逻辑
+    "realistic": ("documentary photograph, vintage color film photo, natural lighting, "
+                  "candid, realistic, highly detailed, sharp focus"),
+    "none": "",
+}
+
+
+def _style_suffix(style: dict[str, Any], profile: str = "horror") -> str:
+    """The fixed tail appended to every prompt. `profile` picks the style档:
+    'horror' uses the story's Style Bible (default), others use a fixed suffix."""
+    override = STYLE_PROFILES.get(profile, None)
+    if override is not None:      # realistic / none / 自定义
+        return override
     parts = [
         style.get("visual_style", "cinematic horror movie"),
         style.get("color", "cold blue and gray"),
@@ -64,6 +110,7 @@ def generate_prompts(
     scenes: list[dict[str, Any]],
     temperature: float = 0.4,
     art_positive: str = "",
+    style: str = "horror",
 ) -> list[dict[str, Any]]:
     characters = story.get("characters", [])
     char_block = "\n".join(f'- {c["name"]}: {c["description"]}' for c in characters)
@@ -79,7 +126,7 @@ def generate_prompts(
     result = client.chat_json(SYSTEM, user, temperature=temperature)
 
     raw = {p["scene_id"]: p["prompt"] for p in result.get("prompts", [])}
-    suffix = _style_suffix(story.get("style_bible", {}))
+    suffix = _style_suffix(story.get("style_bible", {}), style)
     art = (art_positive or "").strip()
 
     final: list[dict[str, Any]] = []

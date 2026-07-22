@@ -43,6 +43,18 @@
   details.art summary { cursor: pointer; color: var(--accent-2); font-size: 13px; }
   details.art textarea { min-height: 44px; margin-top: 4px; }
   .alabel { display: block; color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .dropzone { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px;
+    padding: 18px; text-align: center; color: var(--muted); font-size: 13px; transition: all .15s; }
+  .dropzone.over { border-color: var(--accent-2); background: rgba(127,176,216,.08); color: var(--text); }
+  .dropzone .pick { color: var(--accent-2); cursor: pointer; text-decoration: underline; }
+  .refthumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .refthumbs .rt { position: relative; width: 84px; }
+  .refthumbs .rt img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+  .refthumbs .rt .idx { position: absolute; left: 4px; bottom: 4px; background: rgba(0,0,0,.7);
+    color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 8px; }
+  .refthumbs .rt .rm { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+    border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 0; }
   .videobox { display: none; background: var(--panel); border: 1px solid var(--border);
     border-radius: 12px; padding: 18px; margin-top: 18px; }
   .videobox video { width: 100%; max-width: 640px; border-radius: 8px; display: block; margin: 0 auto; background: #000; }
@@ -145,17 +157,25 @@
     <div class="row">
       <button id="go">生成</button>
       <button id="stop" class="stop" style="display:none">■ 停止</button>
+      <label class="chk">风格
+        <select id="style">
+          <option value="horror" selected>恐怖(默认)</option>
+          <option value="realistic">写实/纪实</option>
+          <option value="none">无(纯描述)</option>
+        </select>
+      </label>
       <label class="chk">分镜图数量
         <select id="frames">
-          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option selected>1</option><option>2</option><option>3</option><option>4</option>
           <option>5</option><option>6</option><option>8</option>
-          <option selected>10</option><option>15</option><option>20</option><option>25</option>
+          <option>10</option><option>15</option><option>20</option><option>25</option>
         </select>
       </label>
       <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片</label>
       <label class="chk"><input type="checkbox" id="charc" /> 人物一致 (IPAdapter)</label>
       <label class="chk"><input type="checkbox" id="videomode" /> 🎬 短视频模式（配音+字幕）</label>
       <label class="chk"><input type="checkbox" id="longmode" /> 📖 长片模式（粘贴朗读稿）</label>
+      <label class="chk"><input type="checkbox" id="promptmode" /> 🧪 图片调试（只按描述出图，跳过剧情）</label>
     </div>
     <div class="hint">调试建议：分镜数调小（2–3 张）可快速验证风格与人物。<b>长片模式</b>：把完整朗读稿粘到上面输入框，分镜数即关键图数量（如 25），逐句配字幕、按 10 分钟成片。</div>
 
@@ -165,7 +185,18 @@
       <textarea id="artpos" rows="2" placeholder="例如：1990年代贵州偏远山村，土坯木屋，泥路，油灯，村民穿洗旧的深蓝灰色粗布衣布鞋"></textarea>
       <label class="alabel">不要什么（负向）</label>
       <textarea id="artneg" rows="2" placeholder="例如：现代汽车, 智能手机, 现代服装, 霓虹灯, 高楼, 塑料制品, 西式建筑"></textarea>
-      <div class="hint">留空则用 config.yaml 的默认设定。约束会同时喂给 AI 规划并兜底拼进图片提示词。</div>
+      <div class="hint">中文/英文均可（含中文会自动翻译成英文再用于生成，正负向都生效）。留空则用 config.yaml 的默认设定。</div>
+    </details>
+
+    <details class="art" id="refbox">
+      <summary>🖼 参考图（仅图片调试模式 · IPAdapter 喂基准图）</summary>
+      <div id="dropzone" class="dropzone">
+        拖动图片到这里，或 <label class="pick">点击选择<input type="file" id="reffiles" accept="image/*" multiple hidden /></label>
+      </div>
+      <div id="refthumbs" class="refthumbs"></div>
+      <div class="hint">按顺序对应 <b>图1、图2…</b>。在上方描述里指认角色，例如：<br>
+        <code>九叔大战僵尸，破庙内 图1=人物 图2=环境</code><br>
+        人物类权重高（更像那张脸/造型），环境类权重低（只带氛围）。仅图片调试模式生效。</div>
     </details>
   </div>
 
@@ -214,6 +245,35 @@ $("stop").addEventListener("click", stop);
 document.querySelectorAll(".examples span").forEach(el =>
   el.addEventListener("click", () => { $("theme").value = el.textContent; }));
 
+// --- reference image drag & drop / pick ---
+let refFiles = [];
+const dz = $("dropzone");
+$("reffiles").addEventListener("change", e => addRefs(e.target.files));
+["dragenter", "dragover"].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); dz.classList.add("over");
+}));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => {
+  e.preventDefault(); dz.classList.remove("over");
+}));
+dz.addEventListener("drop", e => addRefs(e.dataTransfer.files));
+
+function addRefs(list) {
+  [...list].filter(f => f.type.startsWith("image/")).forEach(f => refFiles.push(f));
+  renderThumbs();
+}
+function renderThumbs() {
+  $("refthumbs").innerHTML = refFiles.map((f, i) =>
+    `<div class="rt"><img src="${URL.createObjectURL(f)}" alt="ref ${i + 1}" />
+       <span class="idx">图${i + 1}</span><button class="rm" data-i="${i}">×</button></div>`).join("");
+  $("refthumbs").querySelectorAll(".rm").forEach(b =>
+    b.onclick = () => { refFiles.splice(+b.dataset.i, 1); renderThumbs(); });
+}
+function readRefs() {
+  return Promise.all(refFiles.map(f => new Promise(res => {
+    const rd = new FileReader(); rd.onload = () => res(rd.result); rd.readAsDataURL(f);
+  })));
+}
+
 function setRunning(running) {
   $("go").disabled = running;
   $("stop").style.display = running ? "inline-block" : "none";
@@ -236,7 +296,8 @@ async function start() {
   const render = $("render").checked;
   const frames = parseInt($("frames").value, 10) || 10;
   const charConsistency = $("charc").checked;
-  const mode = $("longmode").checked ? "long" : ($("videomode").checked ? "video" : "frames");
+  const mode = $("promptmode").checked ? "prompt"
+    : ($("longmode").checked ? "long" : ($("videomode").checked ? "video" : "frames"));
   expectedFrames = frames;
 
   $("err").style.display = "none";
@@ -253,7 +314,13 @@ async function start() {
   $("stop").textContent = "■ 停止";
   setRunning(true);
   stageNames = [];
-  renderStages({ step: 1, total: mode === "video" ? 3 : 4, label: "故事创作" });
+  const initTotal = mode === "prompt" ? 1 : (mode === "video" ? 3 : 4);
+  renderStages({ step: 1, total: initTotal, label: mode === "prompt" ? "出图" : "故事创作" });
+
+  let references = [];
+  if (mode === "prompt" && refFiles.length) {
+    references = await readRefs();
+  }
 
   let job_id;
   try {
@@ -264,6 +331,7 @@ async function start() {
         theme, render_images: render,
         num_frames: frames, character_consistency: charConsistency, mode,
         art_positive: $("artpos").value, art_negative: $("artneg").value,
+        references, style: $("style").value,
       }),
     });
     if (!r.ok) throw new Error((await r.json()).detail || r.statusText);

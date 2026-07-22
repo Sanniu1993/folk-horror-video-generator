@@ -12,6 +12,7 @@ Then open http://127.0.0.1:8000
 """
 from __future__ import annotations
 
+import base64
 import logging
 import threading
 import uuid
@@ -27,6 +28,7 @@ from logging_config import setup_logging
 from pipeline import ROOT, load_config, run
 from short_video import run_short_video
 from long_video import run_long_video
+from debug_images import run_prompt_images
 
 setup_logging(load_config())
 logger = logging.getLogger(__name__)
@@ -79,6 +81,8 @@ def _run_job(
     mode: str = "frames",
     art_positive: str = "",
     art_negative: str = "",
+    references: list[str] | None = None,
+    style: str = "horror",
 ) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
@@ -117,7 +121,18 @@ def _run_job(
 
     cancel_event = _cancels[job_id]
     try:
-        if mode == "long":
+        if mode == "prompt":
+            run_prompt_images(
+                theme,  # 图片调试模式:theme 框即画面描述
+                num_images=num_frames,
+                on_event=on_event,
+                should_cancel=cancel_event.is_set,
+                art_positive=art_positive,
+                art_negative=art_negative,
+                references=references or [],
+                style=style,
+            )
+        elif mode == "long":
             run_long_video(
                 theme,  # in long mode the "theme" field carries the full script
                 num_images=num_frames,
@@ -125,6 +140,7 @@ def _run_job(
                 should_cancel=cancel_event.is_set,
                 art_positive=art_positive,
                 art_negative=art_negative,
+                style=style,
             )
         elif mode == "video":
             run_short_video(
@@ -134,6 +150,7 @@ def _run_job(
                 should_cancel=cancel_event.is_set,
                 art_positive=art_positive,
                 art_negative=art_negative,
+                style=style,
             )
         else:
             run(
@@ -145,6 +162,7 @@ def _run_job(
                 character_consistency=character_consistency,
                 art_positive=art_positive,
                 art_negative=art_negative,
+                style=style,
             )
         with _lock:
             if _jobs[job_id]["status"] == "running":
@@ -163,6 +181,8 @@ class GenerateRequest(BaseModel):
     mode: str = "frames"       # "frames" (storyboard) | "video" (short clip) | "long" (script-driven)
     art_positive: str = ""     # 画面约束(要什么);空则用 config 默认
     art_negative: str = ""     # 画面约束(不要什么)
+    references: list[str] = []  # 图片调试模式:参考图(data URL / base64),按顺序对应"图1、图2…"
+    style: str = "horror"      # 风格档:horror(默认) / realistic / none
 
 
 @app.post("/api/generate")
@@ -172,13 +192,28 @@ def generate(req: GenerateRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="theme 不能为空")
     cap = 40 if req.mode == "long" else 10   # long videos allow many more images
     frames = max(1, min(cap, req.num_frames))
+
+    # Decode uploaded reference images (data URLs) to files for IPAdapter.
+    ref_paths: list[str] = []
+    if req.references:
+        up = OUTPUTS_DIR / "_uploads"
+        up.mkdir(parents=True, exist_ok=True)
+        for i, data in enumerate(req.references[:5]):
+            try:
+                b64 = data.split(",", 1)[1] if data.startswith("data:") else data
+                p = up / f"{uuid.uuid4().hex[:8]}_ref{i}.png"
+                p.write_bytes(base64.b64decode(b64))
+                ref_paths.append(str(p))
+            except Exception as exc:
+                logger.warning("bad reference image %d: %s", i, exc)
+
     job_id = _new_job(theme, req.render_images)
     logger.info("Job %s created (mode=%s, render=%s, frames=%d, char_consistency=%s): %r",
                 job_id, req.mode, req.render_images, frames, req.character_consistency, theme)
     threading.Thread(
         target=_run_job,
         args=(job_id, theme, req.render_images, frames, req.character_consistency, req.mode,
-              req.art_positive, req.art_negative),
+              req.art_positive, req.art_negative, ref_paths, req.style),
         daemon=True,
     ).start()
     return {"job_id": job_id}

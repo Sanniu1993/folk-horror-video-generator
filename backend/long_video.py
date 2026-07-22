@@ -79,7 +79,7 @@ def _group_lines(lines: list[str], durs: list[float], n_images: int) -> list[lis
 
 
 def run_long_video(script: str, num_images: int = 25, on_event=None, should_cancel=None,
-                   art_positive="", art_negative="") -> Path:
+                   art_positive="", art_negative="", style="horror") -> Path:
     def emit(event, payload):
         if on_event:
             try:
@@ -99,10 +99,11 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
     tts_cfg = vcfg.get("tts", {})
     img_w = vcfg.get("image_width", gen_cfg["width"])
     img_h = vcfg.get("image_height", gen_cfg["height"])
+    from prompt_generator import to_english_fragment
     art = config.get("art_direction", {})
-    art_pos = (art_positive or "").strip() or art.get("positive", "")
-    art_neg = (art_negative or "").strip() or art.get("negative", "")
-    negative = config["negative_prompt"] + ((", " + art_neg.strip()) if art_neg.strip() else "")
+    art_pos = to_english_fragment(ds, (art_positive or "").strip() or art.get("positive", ""))
+    art_neg = to_english_fragment(ds, (art_negative or "").strip() or art.get("negative", ""))
+    negative = config["negative_prompt"] + ((", " + art_neg) if art_neg.strip() else "")
 
     lines = _split_lines(script)
     logger.info("=== Long video | %d lines | target %d images ===", len(lines), num_images)
@@ -128,7 +129,7 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
         groups = _group_lines(lines, [li["dur"] for li in line_items], num_images)
         emit("stage", {"step": 2, "total": 4, "label": "分镜规划"})
         bible = ds.chat_json(STYLE_SYSTEM, "剧本全文:\n" + script + art_note(art_pos), temperature=0.5)
-        suffix = _style_suffix(bible.get("style_bible", {}))
+        suffix = _style_suffix(bible.get("style_bible", {}), style)
         chars = "\n".join(f'- {c["name"]}: {c["description"]}' for c in bible.get("characters", []))
         group_texts = ["".join(lines[i] for i in g) for g in groups]
         user = (

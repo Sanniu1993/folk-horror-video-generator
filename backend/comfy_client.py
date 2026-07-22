@@ -60,25 +60,32 @@ class ComfyClient:
         out_dir: Path,
         should_cancel: CancelCheck = None,
         reference_image: Optional[Path] = None,
+        references: Optional[list[dict[str, Any]]] = None,
     ) -> Path:
         """Generate one image and return the local path it was saved to.
 
-        If reference_image is given, the IPAdapter workflow conditions the
-        render on that face for character consistency.
+        - reference_image: a single face reference (character consistency).
+        - references: a list of {path, weight} user reference images, each
+          conditioned via its own IPAdapter node (multi-reference chain).
         If should_cancel() becomes true while waiting, the in-flight ComfyUI
         render is interrupted and RunCancelled is raised.
         """
-        use_ipa = reference_image is not None and self.workflow_ipadapter is not None
-        ref_name = None
-        if use_ipa:
-            ref_name = self.upload_image(reference_image)
-        wf = self._build_workflow(
-            positive, negative, seed, width, height, gen_cfg, filename_prefix,
-            reference_name=ref_name if use_ipa else None,
-        )
-        logger.debug("Rendering %s seed=%d %dx%d steps=%s cfg=%s ipadapter=%s",
-                     filename_prefix, seed, width, height, gen_cfg.get("steps"),
-                     gen_cfg.get("cfg"), bool(use_ipa))
+        if references:
+            uploaded = [(self.upload_image(Path(r["path"])), float(r.get("weight", 0.7)))
+                        for r in references]
+            wf = self._build_ref_workflow(
+                positive, negative, seed, width, height, gen_cfg, filename_prefix, uploaded)
+            logger.debug("Rendering %s with %d reference image(s)", filename_prefix, len(uploaded))
+        else:
+            use_ipa = reference_image is not None and self.workflow_ipadapter is not None
+            ref_name = self.upload_image(reference_image) if use_ipa else None
+            wf = self._build_workflow(
+                positive, negative, seed, width, height, gen_cfg, filename_prefix,
+                reference_name=ref_name,
+            )
+            logger.debug("Rendering %s seed=%d %dx%d steps=%s cfg=%s ipadapter=%s",
+                         filename_prefix, seed, width, height, gen_cfg.get("steps"),
+                         gen_cfg.get("cfg"), bool(use_ipa))
         logger.debug("Positive prompt: %s", positive[:300])
         started = time.monotonic()
         prompt_id = self._queue(wf)
@@ -132,6 +139,45 @@ class ComfyClient:
             ipa = self.nodes_ipadapter
             wf[ipa["load_image"]]["inputs"]["image"] = reference_name
             wf[ipa["ipadapter"]]["inputs"]["weight"] = self.ipadapter_weight
+        return wf
+
+    def _build_ref_workflow(
+        self, positive: str, negative: str, seed: int, width: int, height: int,
+        gen_cfg: dict[str, Any], filename_prefix: str,
+        refs: list[tuple[str, float]],
+    ) -> dict[str, Any]:
+        """Build an SDXL workflow whose model passes through one IPAdapter node
+        per user reference image (chained), each with its own weight."""
+        wf: dict[str, Any] = {
+            "4": {"class_type": "CheckpointLoaderSimple",
+                  "inputs": {"ckpt_name": gen_cfg.get("ckpt_name", "sd_xl_base_1.0.safetensors")}},
+            "5": {"class_type": "EmptyLatentImage",
+                  "inputs": {"width": width, "height": height, "batch_size": 1}},
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": positive, "clip": ["4", 1]}},
+            "7": {"class_type": "CLIPTextEncode", "inputs": {"text": negative, "clip": ["4", 1]}},
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"filename_prefix": filename_prefix, "images": ["8", 0]}},
+            "11": {"class_type": "IPAdapterUnifiedLoader",
+                   "inputs": {"model": ["4", 0], "preset": "PLUS (high strength)"}},
+            "3": {"class_type": "KSampler", "inputs": {
+                "seed": seed, "steps": gen_cfg["steps"], "cfg": gen_cfg["cfg"],
+                "sampler_name": gen_cfg["sampler_name"], "scheduler": gen_cfg["scheduler"],
+                "denoise": 1.0, "positive": ["6", 0], "negative": ["7", 0],
+                "latent_image": ["5", 0], "model": ["11", 0]}},
+        }
+        prev_model = ["11", 0]
+        nid = 20
+        for name, weight in refs:
+            load_id, ipa_id = str(nid), str(nid + 1)
+            nid += 2
+            wf[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
+            wf[ipa_id] = {"class_type": "IPAdapterAdvanced", "inputs": {
+                "model": prev_model, "ipadapter": ["11", 1], "image": [load_id, 0],
+                "weight": weight, "weight_type": "linear", "combine_embeds": "concat",
+                "start_at": 0.0, "end_at": 1.0, "embeds_scaling": "V only"}}
+            prev_model = [ipa_id, 0]
+        wf["3"]["inputs"]["model"] = prev_model
         return wf
 
     def upload_image(self, path: Path) -> str:
