@@ -32,6 +32,9 @@ comfyui:
   timeout_seconds: 300
 
 generation:
+  # 出图模型(checkpoints 目录下的文件名)。换模型只改这一处。
+  # RealVisXL V5.0:写实/电影感的 SDXL 微调,明显优于 SDXL base。
+  ckpt_name: "RealVisXL_V5.0_fp16.safetensors"
   num_key_frames: 10        # V1: 10 key frames is enough for a 10-min video
   width: 1024
   height: 1024

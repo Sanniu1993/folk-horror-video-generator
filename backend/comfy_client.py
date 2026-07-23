@@ -33,6 +33,7 @@ class ComfyClient:
         self.nodes = cfg["nodes"]
         self.nodes_ipadapter = cfg.get("nodes_ipadapter", {})
         self.ipadapter_weight = cfg.get("ipadapter_weight", 0.75)
+        self.ckpt_name = config.get("generation", {}).get("ckpt_name")  # single source
         self.timeout = cfg.get("timeout_seconds", 300)
         self.client_id = uuid.uuid4().hex
 
@@ -118,6 +119,11 @@ class ComfyClient:
     ) -> dict[str, Any]:
         template = self.workflow_ipadapter if reference_name else self.workflow_template
         wf = copy.deepcopy(template)
+        # Checkpoint comes from config (single source), overriding the JSON default.
+        if self.ckpt_name:
+            for node in wf.values():
+                if node.get("class_type") == "CheckpointLoaderSimple":
+                    node["inputs"]["ckpt_name"] = self.ckpt_name
         n = self.nodes
         wf[n["positive_prompt"]]["inputs"]["text"] = positive
         wf[n["negative_prompt"]]["inputs"]["text"] = negative

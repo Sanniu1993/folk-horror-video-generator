@@ -27,57 +27,60 @@
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
 
   .composer { background: var(--panel); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px; }
+    border-radius: 12px; padding: 20px; }
   textarea {
-    width: 100%; min-height: 70px; resize: vertical; background: var(--panel-2);
+    width: 100%; min-height: 140px; resize: vertical; background: var(--panel-2);
     color: var(--text); border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px 14px; font-size: 15px; font-family: inherit;
+    padding: 12px 14px; font-size: 15px; font-family: inherit; line-height: 1.6;
   }
   textarea:focus { outline: none; border-color: var(--accent-2); }
-  .row { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-  label.chk { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; }
-  select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 4px 8px; font-size: 13px; }
-  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; opacity: .8; }
-  details.art { margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
-  details.art summary { cursor: pointer; color: var(--accent-2); font-size: 13px; }
-  details.art textarea { min-height: 44px; margin-top: 4px; }
+
+  /* 设置区:分组网格布局,更整齐 */
+  .settings {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .field {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .field .label {
+    display: block; color: var(--muted); font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .field select {
+    width: 100%; background: transparent; color: var(--text); border: none;
+    font-size: 14px; padding: 2px 0; outline: none; cursor: pointer;
+    font-family: inherit;
+  }
+  .field select option { background: var(--panel-2); color: var(--text); }
+
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; }
+
+  details.art { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; background: var(--panel-2); }
+  details.art[open] { padding-bottom: 14px; }
+  details.art summary { cursor: pointer; color: var(--accent-2); font-size: 13px;
+    padding: 4px 0; user-select: none; }
+  details.art textarea { min-height: 60px; margin-top: 6px; }
   .alabel { display: block; color: var(--muted); font-size: 12px; margin-top: 10px; }
-  .dropzone { margin-top: 8px; border: 1px dashed var(--border); border-radius: 8px;
-    padding: 18px; text-align: center; color: var(--muted); font-size: 13px; transition: all .15s; }
-  .dropzone.over { border-color: var(--accent-2); background: rgba(127,176,216,.08); color: var(--text); }
-  .dropzone .pick { color: var(--accent-2); cursor: pointer; text-decoration: underline; }
-  .refthumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .refthumbs .rt { position: relative; width: 84px; }
-  .refthumbs .rt img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
-  .refthumbs .rt .idx { position: absolute; left: 4px; bottom: 4px; background: rgba(0,0,0,.7);
-    color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 8px; }
-  .refthumbs .rt .rm { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
-    border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer;
-    font-size: 13px; line-height: 1; padding: 0; }
-  .videobox { display: none; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px; margin-top: 18px; }
-  .videobox video { width: 100%; max-width: 640px; border-radius: 8px; display: block; margin: 0 auto; background: #000; }
-  .refs { display: none; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 12px; padding: 14px 18px; margin-top: 18px; }
-  .refs .section-title { margin-top: 0; }
-  .refs .row2 { display: flex; gap: 12px; flex-wrap: wrap; }
-  .refs figure { margin: 0; width: 120px; }
-  .refs img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
-  .refs figcaption { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; }
+
   button {
     background: var(--accent); color: #fff; border: none; border-radius: 8px;
-    padding: 11px 22px; font-size: 15px; cursor: pointer; letter-spacing: 1px;
+    padding: 11px 26px; font-size: 15px; cursor: pointer; letter-spacing: 1px;
   }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.stop { background: #3a3f47; }
   button.stop:hover { background: #4a505a; }
-  .examples { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
-  .examples span {
-    font-size: 12px; color: var(--muted); border: 1px dashed var(--border);
-    padding: 4px 10px; border-radius: 20px; cursor: pointer;
-  }
-  .examples span:hover { color: var(--text); border-color: var(--accent-2); }
+
+  .videobox { display: none; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .videobox video { width: 100%; max-width: 720px; border-radius: 8px; display: block;
+    margin: 0 auto; background: #000; }
+  .videobox.portrait video { max-width: 360px; }
 
   .status { margin: 24px 0 8px; display: none; }
   .stages { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -100,37 +103,15 @@
   .bible { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .bible b { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
     border-radius: 6px; padding: 3px 10px; font-weight: normal; font-size: 12px; color: var(--accent-2); }
-  .chars { font-size: 13px; color: var(--muted); }
-  .chars .name { color: var(--text); }
 
   .section-title { margin: 18px 0 10px; font-size: 14px; letter-spacing: 2px;
     color: var(--accent-2); border-left: 3px solid var(--accent); padding-left: 10px; }
-  ol.arc { margin: 0; padding-left: 0; list-style: none; counter-reset: ch; }
-  ol.arc li { counter-increment: ch; position: relative; padding: 10px 0 10px 40px;
-    border-bottom: 1px dashed var(--border); }
-  ol.arc li:last-child { border-bottom: none; }
-  ol.arc li::before { content: counter(ch); position: absolute; left: 0; top: 10px;
-    width: 26px; height: 26px; line-height: 26px; text-align: center; border-radius: 50%;
-    background: var(--panel-2); border: 1px solid var(--accent); color: var(--accent);
-    font-size: 13px; }
-  ol.arc .ch-title { color: var(--text); font-weight: 600; font-size: 14px; }
-  ol.arc .ch-event { color: var(--muted); font-size: 13px; margin-top: 2px; }
-
-  .board { display: none; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px; margin-top: 18px; }
-  .scene { padding: 10px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
-  .scene:last-child { border-bottom: none; }
-  .scene .head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
-  .scene .sid { background: var(--accent); color: #fff; border-radius: 5px; padding: 1px 8px; font-size: 12px; }
-  .scene .tag { background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
-    border-radius: 5px; padding: 1px 8px; font-size: 11px; }
-  .scene .visual { color: var(--text); }
-  .scene .prompt { color: var(--muted); font-size: 12px; margin-top: 3px; font-family: ui-monospace, monospace; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr));
     gap: 12px; margin-top: 20px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-    overflow: hidden; aspect-ratio: 1; position: relative; }
+    overflow: hidden; aspect-ratio: 16/9; position: relative; }
+  .card.portrait { aspect-ratio: 9/16; }
   .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .card .idx { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.6);
     color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 12px; }
@@ -145,59 +126,57 @@
 <body>
 <div class="wrap">
   <h1>AI <span class="accent">恐怖故事</span> 视觉生成器</h1>
-  <div class="sub">输入一句主题 → 结构化故事 · 电影分镜 · 10 张风格统一关键帧</div>
+  <div class="sub">粘贴故事稿或播音稿 → 结构化分镜 · 关键帧 · 配音字幕成片</div>
 
   <div class="composer">
-    <textarea id="theme" placeholder="例如：一个废弃医院里的午夜护士故事"></textarea>
-    <div class="examples">
-      <span>一个废弃医院里的午夜护士故事</span>
-      <span>老宅阁楼里被封住的一面镜子</span>
-      <span>末班地铁上多出来的一位乘客</span>
-    </div>
-    <div class="row">
-      <button id="go">生成</button>
-      <button id="stop" class="stop" style="display:none">■ 停止</button>
-      <label class="chk">风格
+    <textarea id="script" placeholder="在这里粘贴完整故事稿 / 播音稿(逐行或整段皆可,中英文自动识别)…&#10;例:&#10;那是1990年的夏天,贵州偏远山村的一间土坯屋里…"></textarea>
+
+    <div class="settings">
+      <div class="field">
+        <label class="label">语言</label>
+        <select id="language">
+          <option value="zh" selected>中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label">画幅</label>
+        <select id="orientation">
+          <option value="landscape" selected>横向 · YouTube 长视频 (16:9)</option>
+          <option value="portrait">竖向 · YouTube Shorts (9:16)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label">风格</label>
         <select id="style">
           <option value="horror" selected>恐怖(默认)</option>
-          <option value="realistic">写实/纪实</option>
+          <option value="realistic">写实 / 纪实</option>
           <option value="none">无(纯描述)</option>
         </select>
-      </label>
-      <label class="chk">分镜图数量
+      </div>
+      <div class="field">
+        <label class="label">分镜图数量</label>
         <select id="frames">
-          <option selected>1</option><option>2</option><option>3</option><option>4</option>
-          <option>5</option><option>6</option><option>8</option>
-          <option>10</option><option>15</option><option>20</option><option>25</option>
+          <option>5</option><option>10</option><option>15</option>
+          <option>20</option><option selected>25</option><option>30</option><option>40</option>
         </select>
-      </label>
-      <label class="chk"><input type="checkbox" id="render" checked /> 渲染图片</label>
-      <label class="chk"><input type="checkbox" id="charc" /> 人物一致 (IPAdapter)</label>
-      <label class="chk"><input type="checkbox" id="videomode" /> 🎬 短视频模式（配音+字幕）</label>
-      <label class="chk"><input type="checkbox" id="longmode" /> 📖 长片模式（粘贴朗读稿）</label>
-      <label class="chk"><input type="checkbox" id="promptmode" /> 🧪 图片调试（只按描述出图，跳过剧情）</label>
+      </div>
     </div>
-    <div class="hint">调试建议：分镜数调小（2–3 张）可快速验证风格与人物。<b>长片模式</b>：把完整朗读稿粘到上面输入框，分镜数即关键图数量（如 25），逐句配字幕、按 10 分钟成片。</div>
 
     <details class="art">
-      <summary>🎨 美术设定（约束画面：年代 / 服饰 / 环境 / 道具）</summary>
-      <label class="alabel">要什么（正向）</label>
-      <textarea id="artpos" rows="2" placeholder="例如：1990年代贵州偏远山村，土坯木屋，泥路，油灯，村民穿洗旧的深蓝灰色粗布衣布鞋"></textarea>
-      <label class="alabel">不要什么（负向）</label>
-      <textarea id="artneg" rows="2" placeholder="例如：现代汽车, 智能手机, 现代服装, 霓虹灯, 高楼, 塑料制品, 西式建筑"></textarea>
-      <div class="hint">中文/英文均可（含中文会自动翻译成英文再用于生成，正负向都生效）。留空则用 config.yaml 的默认设定。</div>
+      <summary>🎨 美术设定(约束年代 / 服饰 / 环境 / 道具)</summary>
+      <label class="alabel">要什么(正向)</label>
+      <textarea id="artpos" rows="2" placeholder="例如:1990年代贵州偏远山村,土坯木屋,泥路,油灯,村民穿洗旧的深蓝灰色粗布衣布鞋"></textarea>
+      <label class="alabel">不要什么(负向)</label>
+      <textarea id="artneg" rows="2" placeholder="例如:现代汽车, 智能手机, 现代服装, 霓虹灯, 高楼, 塑料制品, 西式建筑"></textarea>
+      <div class="hint">中/英文均可(含中文会自动翻译成英文再用于生成)。留空则用 config.yaml 的默认值。</div>
     </details>
 
-    <details class="art" id="refbox">
-      <summary>🖼 参考图（仅图片调试模式 · IPAdapter 喂基准图）</summary>
-      <div id="dropzone" class="dropzone">
-        拖动图片到这里，或 <label class="pick">点击选择<input type="file" id="reffiles" accept="image/*" multiple hidden /></label>
-      </div>
-      <div id="refthumbs" class="refthumbs"></div>
-      <div class="hint">按顺序对应 <b>图1、图2…</b>。在上方描述里指认角色，例如：<br>
-        <code>九叔大战僵尸，破庙内 图1=人物 图2=环境</code><br>
-        人物类权重高（更像那张脸/造型），环境类权重低（只带氛围）。仅图片调试模式生效。</div>
-    </details>
+    <div class="actions">
+      <button id="go">生成</button>
+      <button id="stop" class="stop" style="display:none">■ 停止</button>
+      <span class="hint" style="margin: 0">建议:先用 5–10 张验证风格,再上 25/30 张。</span>
+    </div>
   </div>
 
   <div class="status" id="status">
@@ -210,69 +189,25 @@
     <h2 id="s-title"></h2>
     <div class="logline" id="s-logline"></div>
     <div class="bible" id="s-bible"></div>
-    <div class="chars" id="s-chars"></div>
-
-    <div class="section-title" id="arc-title" style="display:none">剧情</div>
-    <ol class="arc" id="s-arc"></ol>
   </div>
 
   <div class="videobox" id="videobox">
-    <div class="section-title">成片（配音 + 字幕）</div>
+    <div class="section-title">成片(配音 + 字幕)</div>
     <video id="player" controls playsinline></video>
-  </div>
-
-  <div class="refs" id="refs">
-    <div class="section-title">角色参考图（IPAdapter 一致性锚点）</div>
-    <div class="row2" id="s-refs"></div>
-  </div>
-
-  <div class="board" id="board">
-    <div class="section-title">分镜 · 镜头脚本</div>
-    <div id="s-scenes"></div>
   </div>
 
   <div class="grid" id="grid"></div>
 </div>
 
 <script>
-const STAGES = ["故事创作", "分镜规划", "Prompt 生成", "渲染关键帧"];
 const $ = (id) => document.getElementById(id);
 let timer = null;
 let currentJob = null;
+let expectedFrames = 25;
+let currentOrientation = "landscape";
 
 $("go").addEventListener("click", start);
 $("stop").addEventListener("click", stop);
-document.querySelectorAll(".examples span").forEach(el =>
-  el.addEventListener("click", () => { $("theme").value = el.textContent; }));
-
-// --- reference image drag & drop / pick ---
-let refFiles = [];
-const dz = $("dropzone");
-$("reffiles").addEventListener("change", e => addRefs(e.target.files));
-["dragenter", "dragover"].forEach(ev => dz.addEventListener(ev, e => {
-  e.preventDefault(); dz.classList.add("over");
-}));
-["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => {
-  e.preventDefault(); dz.classList.remove("over");
-}));
-dz.addEventListener("drop", e => addRefs(e.dataTransfer.files));
-
-function addRefs(list) {
-  [...list].filter(f => f.type.startsWith("image/")).forEach(f => refFiles.push(f));
-  renderThumbs();
-}
-function renderThumbs() {
-  $("refthumbs").innerHTML = refFiles.map((f, i) =>
-    `<div class="rt"><img src="${URL.createObjectURL(f)}" alt="ref ${i + 1}" />
-       <span class="idx">图${i + 1}</span><button class="rm" data-i="${i}">×</button></div>`).join("");
-  $("refthumbs").querySelectorAll(".rm").forEach(b =>
-    b.onclick = () => { refFiles.splice(+b.dataset.i, 1); renderThumbs(); });
-}
-function readRefs() {
-  return Promise.all(refFiles.map(f => new Promise(res => {
-    const rd = new FileReader(); rd.onload = () => res(rd.result); rd.readAsDataURL(f);
-  })));
-}
 
 function setRunning(running) {
   $("go").disabled = running;
@@ -285,42 +220,30 @@ async function stop() {
   $("stop").textContent = "停止中…";
   try {
     await fetch("/api/jobs/" + currentJob + "/cancel", { method: "POST" });
-  } catch (e) { /* the poll loop will reflect the final state */ }
+  } catch (e) { /* poll loop will reflect the final state */ }
 }
 
-let expectedFrames = 10;
-
 async function start() {
-  const theme = $("theme").value.trim();
-  if (!theme) { $("theme").focus(); return; }
-  const render = $("render").checked;
-  const frames = parseInt($("frames").value, 10) || 10;
-  const charConsistency = $("charc").checked;
-  const mode = $("promptmode").checked ? "prompt"
-    : ($("longmode").checked ? "long" : ($("videomode").checked ? "video" : "frames"));
+  const script = $("script").value.trim();
+  if (!script) { $("script").focus(); return; }
+  const frames = parseInt($("frames").value, 10) || 25;
+  const orientation = $("orientation").value;
+  const language = $("language").value;
   expectedFrames = frames;
+  currentOrientation = orientation;
 
   $("err").style.display = "none";
   $("story").style.display = "none";
-  $("board").style.display = "none";
-  $("refs").style.display = "none";
   $("videobox").style.display = "none";
+  $("videobox").classList.toggle("portrait", orientation === "portrait");
   $("player").removeAttribute("src");
-  $("s-refs").innerHTML = "";
-  $("s-scenes").innerHTML = "";
   $("grid").innerHTML = "";
   $("status").style.display = "block";
   $("stop").disabled = false;
   $("stop").textContent = "■ 停止";
   setRunning(true);
   stageNames = [];
-  const initTotal = mode === "prompt" ? 1 : (mode === "video" ? 3 : 4);
-  renderStages({ step: 1, total: initTotal, label: mode === "prompt" ? "出图" : "故事创作" });
-
-  let references = [];
-  if (mode === "prompt" && refFiles.length) {
-    references = await readRefs();
-  }
+  renderStages({ step: 1, total: 4, label: "配音(逐句)" });
 
   let job_id;
   try {
@@ -328,16 +251,24 @@ async function start() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        theme, render_images: render,
-        num_frames: frames, character_consistency: charConsistency, mode,
-        art_positive: $("artpos").value, art_negative: $("artneg").value,
-        references, style: $("style").value,
+        script,
+        num_frames: frames,
+        art_positive: $("artpos").value,
+        art_negative: $("artneg").value,
+        style: $("style").value,
+        orientation, language,
       }),
     });
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const d = body.detail;
+      const msg = Array.isArray(d) ? d.map(e => `${(e.loc||[]).join('.')}: ${e.msg}`).join("; ")
+                : (typeof d === "string" ? d : r.statusText);
+      throw new Error(msg);
+    }
     job_id = (await r.json()).job_id;
   } catch (e) {
-    showError("启动失败：" + e.message);
+    showError("启动失败:" + e.message);
     setRunning(false);
     return;
   }
@@ -355,8 +286,6 @@ async function poll(job_id) {
 
   if (job.stage) renderStages(job.stage);
   if (job.story) renderStory(job.story);
-  if (job.characters && job.characters.length) renderRefs(job.characters);
-  if (job.scenes) renderScenes(job.scenes, job.prompts);
   if (job.video) {
     $("videobox").style.display = "block";
     if ($("player").getAttribute("src") !== job.video) $("player").src = job.video;
@@ -368,10 +297,10 @@ async function poll(job_id) {
     setRunning(false);
     currentJob = null;
     if (job.status === "done") markStagesComplete();
-    if (job.status === "error") showError("生成中断：" + (job.error || "未知错误"));
+    if (job.status === "error") showError("生成中断:" + (job.error || "未知错误"));
     if (job.status === "cancelled") {
       const n = (job.images || []).length;
-      showError("已停止生成" + (n ? `（已保留 ${n} 张已完成的图片）` : "") + "。");
+      showError("已停止生成" + (n ? `(已保留 ${n} 张已完成的图片)` : "") + "。");
     }
   }
 }
@@ -399,66 +328,33 @@ function renderStory(s) {
   $("s-title").textContent = s.title || "";
   $("s-logline").textContent = s.logline || "";
   const b = s.style_bible || {};
-  $("s-bible").innerHTML = Object.values(b).map(v => `<b>${v}</b>`).join("");
-  $("s-chars").innerHTML = (s.characters || [])
-    .map(c => `<div><span class="name">${c.name}</span>：${esc(c.description)}</div>`)
-    .join("");
-
-  const arc = s.story_arc || [];
-  $("arc-title").style.display = arc.length ? "block" : "none";
-  $("s-arc").innerHTML = arc.map(ch =>
-    `<li><div class="ch-title">${esc(ch.title || "")}</div>
-         <div class="ch-event">${esc(ch.event || "")}</div></li>`).join("");
-}
-
-function renderScenes(scenes, prompts) {
-  if (!scenes || !scenes.length) return;
-  $("board").style.display = "block";
-  const pmap = {};
-  (prompts || []).forEach(p => { pmap[p.scene_id] = p.prompt; });
-  $("s-scenes").innerHTML = scenes.map(sc => {
-    const tags = ["time", "camera", "emotion", "lighting"]
-      .filter(k => sc[k]).map(k => `<span class="tag">${esc(sc[k])}</span>`).join("");
-    const prompt = pmap[sc.scene_id]
-      ? `<div class="prompt">▶ ${esc(pmap[sc.scene_id])}</div>` : "";
-    return `<div class="scene">
-      <div class="head"><span class="sid">#${sc.scene_id}</span>
-        <span class="tag">${esc(sc.purpose || "")}</span>${tags}</div>
-      <div class="visual">${esc(sc.visual || "")}</div>${prompt}</div>`;
-  }).join("");
+  $("s-bible").innerHTML = Object.values(b).map(v => `<b>${esc(v)}</b>`).join("");
 }
 
 function esc(s) {
   return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
-function renderRefs(characters) {
-  $("refs").style.display = "block";
-  $("s-refs").innerHTML = characters.map(c =>
-    `<figure><img src="${c.url}" alt="${esc(c.name)}" />
-       <figcaption>${esc(c.name)}</figcaption></figure>`).join("");
-}
-
 function renderGrid(job) {
-  const total = (job.prompts && job.prompts.length) || expectedFrames;
+  const total = expectedFrames;
   const byId = {};
   (job.images || []).forEach(im => { byId[im.scene_id] = im; });
-  const busyIndex = (job.stage && job.stage.step === 4) ? job.images.length + 1 : -1;
+  const busyIndex = (job.stage && job.stage.step === 3) ? (job.images || []).length + 1 : -1;
+  const cardCls = currentOrientation === "portrait" ? "card portrait" : "card";
 
   let html = "";
   for (let i = 1; i <= total; i++) {
     const im = byId[i];
     if (im) {
-      html += `<div class="card"><span class="idx">#${i}</span>
+      html += `<div class="${cardCls}"><span class="idx">#${i}</span>
                  <img src="${im.url}" alt="frame ${i}" /></div>`;
     } else {
       const busy = (i === busyIndex) ? "busy" : "";
       const label = busy ? "渲染中…" : "#" + i;
-      html += `<div class="card placeholder ${busy}">${label}</div>`;
+      html += `<div class="${cardCls} placeholder ${busy}">${label}</div>`;
     }
   }
-  // Only show the grid once rendering has begun (or a frame exists).
-  if ((job.images && job.images.length) || (job.stage && job.stage.step === 4)) {
+  if ((job.images && job.images.length) || (job.stage && job.stage.step === 3)) {
     $("grid").innerHTML = html;
   }
 }

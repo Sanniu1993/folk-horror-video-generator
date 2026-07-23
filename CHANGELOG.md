@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-07-23
+
+### 解决"配音 AI 味太重":edge-tts 重试化 + 英文默认换低沉叙事声 + 422 可读化
+
+- **改了什么**:
+  - **根因**:`say failed: Voice 'Alex'` 的真正问题不是音色名,而是 edge-tts(微软神经语音,首选)一次性网络抖动就被 `except` 捕获、整段降级到机械的 macOS `say`。诊断确认 `.venv` 里 edge-tts 7.2.8 正常、能合成中英文 mp3,失败是临时性的。
+  - `video_builder._edge_tts` 增加**重试**(默认 4 次,1.5s 起指数退避)+ **空文件校验**(edge 偶发"成功"却写 0 字节也算失败重试);`synth_narration` 仅在重试全部失败后才降级,并支持 `tts.allow_say_fallback=false` 强制"宁可失败也不用机械声"。
+  - `long_video.EN_VOICE_DEFAULT`:`GuyNeural` → **`en-US-ChristopherNeural`**(低沉沉稳,叙事/恐怖旁白感更强);离线兜底 `EN_SAY_VOICE` 由不存在的 `Alex` 改为 `Samantha`。
+  - 前端 422 校验错误可读化(拼 `loc + msg`,不再 `[object Object]`)。
+- **为什么**:用户反馈成片配音机械感重——因为实际用的是 `say` 兜底而非神经语音;重试让临时失败不再毁掉整段音质。
+- **如何验证**:`.venv` 内实测 edge-tts 合成 Guy/Andrew/Brian/Christopher 四款英文声均成功(~20KB mp3);语法/导入通过。完整成片需重启 uvicorn 后实跑。
+
+### 精简为"稿件驱动"单一模式 + 画幅切换 + 英文剧本支持 + 前端界面重整
+
+- **改了什么**:
+  - **移除模式**:去掉"一句话生成故事"(frames/video/prompt 三种模式)与"人物一致 IPAdapter"开关,只保留"粘贴故事稿/播音稿 → 分镜图 + 配音字幕成片"。`main.py` 精简为单一入口(仅调用 `run_long_video`);移除 references / character_consistency / render_images / mode 参数。
+  - **移除参考图**:前端删除拖拽上传参考图区,后端不再解码 references(去掉 base64/uploads 处理);IPAdapter 相关模块仍保留,但走不到。
+  - **画幅切换**:请求增加 `orientation`(landscape=1920×1080 / portrait=1080×1920 Shorts);`long_video._resolve_video_cfg` 依据画幅覆盖 `out_width/out_height` 与 SDXL 出图尺寸(1344×768 / 768×1344);前端图片网格 aspect-ratio 与视频容器随画幅切换。
+  - **英文剧本**:请求增加 `language`(zh/en);`long_video.py` 拆出英文版 STYLE_SYSTEM/PROMPT_SYSTEM(不再强制"Chinese/East Asian"),TTS 音色切换到 `en-US-GuyNeural`(离线兜底 `Alex`);`video_builder._wrap_cjk` 检测非 CJK 时按单词换行(而非逐字),字幕英文长句正常换行。
+  - **前端界面重整**:配置改为四格网格(语言/画幅/风格/分镜数),布局更整齐;去掉多个 checkbox 开关;示例主题词 chips 移除(输入区改为一个大 textarea);美术设定折叠面板样式统一。
+- **为什么**:用户不需要 AI 自编故事,只用已有稿子;参考图功能实际不稳定(整图特征注入难以精确);需要覆盖 YouTube 长视频与 Shorts 两种投放尺寸;英文稿件之前会被强制翻中文/配中文旁白。
+- **如何验证**:`python3 -c "ast.parse(...)"` 三个后端文件语法通过;前端 index.html 已在预览面板可打开;完整生成需 GPU 环境实跑(未跑)。
+
 ## 2026-07-22
 
 ### 图片调试模式 + 中文约束翻译 + 参考图 IPAdapter + 拖拽上传 + 可选风格档

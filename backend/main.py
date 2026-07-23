@@ -1,10 +1,10 @@
 """FastAPI app: serves the web UI, runs generation jobs, streams progress.
 
-Layout of what it serves:
+Layout:
     GET  /                      -> the web UI (frontend/index.html)
     POST /api/generate          -> start a job, returns {job_id}
     GET  /api/jobs/{job_id}      -> job status + artifacts + image URLs (poll this)
-    GET  /outputs/<run>/...      -> generated images (static)
+    GET  /outputs/<run>/...      -> generated images / video (static)
 
 Run:
     uvicorn main:app --reload --app-dir backend
@@ -12,7 +12,6 @@ Then open http://127.0.0.1:8000
 """
 from __future__ import annotations
 
-import base64
 import logging
 import threading
 import uuid
@@ -25,10 +24,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from logging_config import setup_logging
-from pipeline import ROOT, load_config, run
-from short_video import run_short_video
+from pipeline import ROOT, load_config
 from long_video import run_long_video
-from debug_images import run_prompt_images
 
 setup_logging(load_config())
 logger = logging.getLogger(__name__)
@@ -36,37 +33,33 @@ logger = logging.getLogger(__name__)
 OUTPUTS_DIR = ROOT / "outputs"
 FRONTEND_DIR = ROOT / "frontend"
 
-app = FastAPI(title="AI Horror Story Visual Generator", version="0.2.0")
+app = FastAPI(title="AI Horror Story Visual Generator", version="0.3.0")
 
-# Generated images are served straight from the outputs directory.
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
 
 # --- in-memory job store ---------------------------------------------------
-# Fine for a single-user local demo. A real deployment would use a queue + DB.
 _jobs: dict[str, dict[str, Any]] = {}
-# Cancel flags live outside the job dict so the dict stays JSON-serializable.
 _cancels: dict[str, threading.Event] = {}
 _lock = threading.Lock()
 
 
-def _new_job(theme: str, render_images: bool) -> str:
+def _new_job(script: str) -> str:
     job_id = uuid.uuid4().hex[:12]
     with _lock:
         _cancels[job_id] = threading.Event()
         _jobs[job_id] = {
             "job_id": job_id,
-            "theme": theme,
-            "status": "running",     # running | done | error | cancelled
-            "stage": None,           # {step,total,label}
+            "script": script[:200],
+            "status": "running",
+            "stage": None,
             "run_dir": None,
             "story": None,
             "scenes": None,
             "prompts": None,
-            "images": [],            # [{scene_id,file,meta}]
-            "characters": [],        # [{name,url}] reference portraits
-            "video": None,           # url of the finished narrated clip
+            "images": [],
+            "video": None,
             "error": None,
         }
     return job_id
@@ -74,15 +67,13 @@ def _new_job(theme: str, render_images: bool) -> str:
 
 def _run_job(
     job_id: str,
-    theme: str,
-    render_images: bool,
+    script: str,
     num_frames: int,
-    character_consistency: bool,
-    mode: str = "frames",
-    art_positive: str = "",
-    art_negative: str = "",
-    references: list[str] | None = None,
-    style: str = "horror",
+    art_positive: str,
+    art_negative: str,
+    style: str,
+    orientation: str,
+    language: str,
 ) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
@@ -97,10 +88,6 @@ def _run_job(
                 job["scenes"] = payload
             elif event == "prompts":
                 job["prompts"] = payload
-            elif event == "character_ref_done":
-                job["characters"].append(
-                    {"name": payload["name"], "url": f"/outputs/{payload['file']}"}
-                )
             elif event == "frame_done":
                 job["images"].append(
                     {
@@ -121,99 +108,54 @@ def _run_job(
 
     cancel_event = _cancels[job_id]
     try:
-        if mode == "prompt":
-            run_prompt_images(
-                theme,  # 图片调试模式:theme 框即画面描述
-                num_images=num_frames,
-                on_event=on_event,
-                should_cancel=cancel_event.is_set,
-                art_positive=art_positive,
-                art_negative=art_negative,
-                references=references or [],
-                style=style,
-            )
-        elif mode == "long":
-            run_long_video(
-                theme,  # in long mode the "theme" field carries the full script
-                num_images=num_frames,
-                on_event=on_event,
-                should_cancel=cancel_event.is_set,
-                art_positive=art_positive,
-                art_negative=art_negative,
-                style=style,
-            )
-        elif mode == "video":
-            run_short_video(
-                theme,
-                num_scenes=num_frames,
-                on_event=on_event,
-                should_cancel=cancel_event.is_set,
-                art_positive=art_positive,
-                art_negative=art_negative,
-                style=style,
-            )
-        else:
-            run(
-                theme,
-                render_images=render_images,
-                on_event=on_event,
-                should_cancel=cancel_event.is_set,
-                num_frames=num_frames,
-                character_consistency=character_consistency,
-                art_positive=art_positive,
-                art_negative=art_negative,
-                style=style,
-            )
+        run_long_video(
+            script,
+            num_images=num_frames,
+            on_event=on_event,
+            should_cancel=cancel_event.is_set,
+            art_positive=art_positive,
+            art_negative=art_negative,
+            style=style,
+            orientation=orientation,
+            language=language,
+        )
         with _lock:
             if _jobs[job_id]["status"] == "running":
                 _jobs[job_id]["status"] = "done"
-    except Exception as exc:  # surface setup errors (missing key, etc.) to the UI
+    except Exception as exc:
         with _lock:
             _jobs[job_id]["status"] = "error"
             _jobs[job_id]["error"] = str(exc)
 
 
 class GenerateRequest(BaseModel):
-    theme: str
-    render_images: bool = True
-    num_frames: int = 10
-    character_consistency: bool = False
-    mode: str = "frames"       # "frames" (storyboard) | "video" (short clip) | "long" (script-driven)
-    art_positive: str = ""     # 画面约束(要什么);空则用 config 默认
-    art_negative: str = ""     # 画面约束(不要什么)
-    references: list[str] = []  # 图片调试模式:参考图(data URL / base64),按顺序对应"图1、图2…"
-    style: str = "horror"      # 风格档:horror(默认) / realistic / none
+    script: str                # 故事稿 / 播音稿(逐行)
+    num_frames: int = 25       # 关键分镜图数量
+    art_positive: str = ""
+    art_negative: str = ""
+    style: str = "horror"      # horror / realistic / none
+    orientation: str = "landscape"  # landscape (YouTube 16:9) | portrait (Shorts 9:16)
+    language: str = "zh"       # zh (中文) | en (English)
 
 
 @app.post("/api/generate")
 def generate(req: GenerateRequest) -> dict[str, str]:
-    theme = req.theme.strip()
-    if not theme:
-        raise HTTPException(status_code=400, detail="theme 不能为空")
-    cap = 40 if req.mode == "long" else 10   # long videos allow many more images
-    frames = max(1, min(cap, req.num_frames))
+    script = req.script.strip()
+    if not script:
+        raise HTTPException(status_code=400, detail="script 不能为空")
+    frames = max(1, min(40, req.num_frames))
+    if req.orientation not in ("landscape", "portrait"):
+        raise HTTPException(status_code=400, detail="orientation 必须是 landscape 或 portrait")
+    if req.language not in ("zh", "en"):
+        raise HTTPException(status_code=400, detail="language 必须是 zh 或 en")
 
-    # Decode uploaded reference images (data URLs) to files for IPAdapter.
-    ref_paths: list[str] = []
-    if req.references:
-        up = OUTPUTS_DIR / "_uploads"
-        up.mkdir(parents=True, exist_ok=True)
-        for i, data in enumerate(req.references[:5]):
-            try:
-                b64 = data.split(",", 1)[1] if data.startswith("data:") else data
-                p = up / f"{uuid.uuid4().hex[:8]}_ref{i}.png"
-                p.write_bytes(base64.b64decode(b64))
-                ref_paths.append(str(p))
-            except Exception as exc:
-                logger.warning("bad reference image %d: %s", i, exc)
-
-    job_id = _new_job(theme, req.render_images)
-    logger.info("Job %s created (mode=%s, render=%s, frames=%d, char_consistency=%s): %r",
-                job_id, req.mode, req.render_images, frames, req.character_consistency, theme)
+    job_id = _new_job(script)
+    logger.info("Job %s created (frames=%d, style=%s, orientation=%s, lang=%s)",
+                job_id, frames, req.style, req.orientation, req.language)
     threading.Thread(
         target=_run_job,
-        args=(job_id, theme, req.render_images, frames, req.character_consistency, req.mode,
-              req.art_positive, req.art_negative, ref_paths, req.style),
+        args=(job_id, script, frames, req.art_positive, req.art_negative,
+              req.style, req.orientation, req.language),
         daemon=True,
     ).start()
     return {"job_id": job_id}
@@ -226,7 +168,7 @@ def cancel_job(job_id: str) -> dict[str, str]:
         job = _jobs.get(job_id)
         if event is None or job is None:
             raise HTTPException(status_code=404, detail="job not found")
-        event.set()  # pipeline checks this between/within stages
+        event.set()
         if job["status"] == "running":
             job["stage"] = {**(job.get("stage") or {}), "label": "正在停止…"}
     logger.info("Job %s: cancel requested", job_id)
@@ -239,7 +181,7 @@ def job_status(job_id: str) -> dict[str, Any]:
         job = _jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
-        return dict(job)  # shallow copy for the response
+        return dict(job)
 
 
 @app.get("/health")

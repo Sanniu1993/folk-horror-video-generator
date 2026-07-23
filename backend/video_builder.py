@@ -81,19 +81,45 @@ def _duration(path: Path) -> float:
 
 # --- narration -------------------------------------------------------------
 
+# edge-tts 走微软服务器,偶发网络抖动/限流。默认多重试几次,避免一次失败
+# 就把整段旁白降级到机械的 macOS `say`(音质断崖式下降)。
+TTS_RETRIES = 4
+TTS_RETRY_WAIT = 1.5   # 秒,每次翻倍退避
+
+
 def _edge_tts(text: str, out_mp3: Path, voice: str, rate: str, pitch: str) -> None:
     import asyncio
+    import time
 
     import edge_tts
 
     async def _go() -> None:
         await edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(str(out_mp3))
 
-    asyncio.run(_go())
+    last_exc: Exception | None = None
+    for attempt in range(1, TTS_RETRIES + 1):
+        try:
+            asyncio.run(_go())
+            # 空文件视为失败(edge 偶尔"成功"却写出 0 字节)。
+            if out_mp3.exists() and out_mp3.stat().st_size > 0:
+                return
+            raise RuntimeError("edge-tts wrote an empty file")
+        except Exception as exc:
+            last_exc = exc
+            if attempt < TTS_RETRIES:
+                wait = TTS_RETRY_WAIT * (2 ** (attempt - 1))
+                logger.warning("edge-tts attempt %d/%d failed (%s); retry in %.1fs",
+                               attempt, TTS_RETRIES, exc, wait)
+                time.sleep(wait)
+    raise RuntimeError(f"edge-tts failed after {TTS_RETRIES} attempts: {last_exc}")
 
 
 def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]] = None):
-    """Speak `text`; return (path, duration_seconds). edge-tts with `say` fallback."""
+    """Speak `text`; return (path, duration_seconds).
+
+    首选 edge-tts(神经语音,自然);带重试。仅当重试全部失败、且未强制禁用兜底
+    (`allow_say_fallback`)时,才降级到机械的 macOS `say`,并明确告警——因为半段
+    神经声半段机械声会很突兀。"""
     cfg = tts_cfg or {}
     out_base.parent.mkdir(parents=True, exist_ok=True)
     if cfg.get("engine", TTS_ENGINE) == "edge":
@@ -103,7 +129,12 @@ def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]]
                       cfg.get("rate", TTS_RATE), cfg.get("pitch", TTS_PITCH))
             return out, _duration(out)
         except Exception as exc:
-            logger.warning("edge-tts failed (%s); falling back to macOS say", exc)
+            if not cfg.get("allow_say_fallback", True):
+                # 宁可整段失败也不用机械声(神经声一致性优先)。
+                raise RuntimeError(
+                    f"edge-tts 合成失败且已禁用 say 兜底:{exc}。"
+                    "请检查网络/代理是否能访问微软 edge-tts。") from exc
+            logger.warning("edge-tts 最终失败(%s);降级到 macOS say(音质会明显变机械)", exc)
     out = out_base.with_suffix(".aiff")
     proc = subprocess.run(["say", "-v", cfg.get("say_voice", SAY_VOICE), text,
                            "-o", str(out)], capture_output=True, text=True)
@@ -114,12 +145,29 @@ def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]]
 
 # --- subtitles -------------------------------------------------------------
 
+_CJK_RE = __import__("re").compile(r"[一-鿿]")
+
+
 def _wrap_cjk(text: str, max_chars: int) -> list[str]:
-    """Wrap CJK text into lines of at most max_chars, preferring to break after
-    punctuation."""
+    """Wrap subtitle text. CJK text breaks per-char (with punctuation preference);
+    non-CJK text (English, etc.) wraps on word boundaries."""
     text = text.strip()
     if len(text) <= max_chars:
         return [text]
+    # 英文/纯拉丁按单词换行(允许 ~2x 字符宽,因为拉丁字符窄)
+    if not _CJK_RE.search(text):
+        limit = max(max_chars * 2, 20)
+        lines, cur = [], ""
+        for word in text.split():
+            if not cur:
+                cur = word
+            elif len(cur) + 1 + len(word) <= limit:
+                cur += " " + word
+            else:
+                lines.append(cur); cur = word
+        if cur:
+            lines.append(cur)
+        return lines
     lines, cur = [], ""
     for ch in text:
         cur += ch
