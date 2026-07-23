@@ -124,7 +124,16 @@ def _group_lines(lines: list[str], durs: list[float], n_images: int) -> list[lis
     return [g for g in groups if g]
 
 
-def _resolve_video_cfg(base_vcfg: dict, orientation: str, language: str) -> tuple[dict, int, int]:
+# 语速档:fast = 现在的默认最快;slow = 比默认慢一档,适合 YouTube 长视频。
+# 数值是 edge-tts 的 rate(相对基准语速)。config 里的 rate 作为 fast 档基准。
+SPEED_RATES = {
+    "fast": "+15%",
+    "slow": "-5%",
+}
+
+
+def _resolve_video_cfg(base_vcfg: dict, orientation: str, language: str,
+                       speed: str = "fast") -> tuple[dict, int, int]:
     """依据画幅返回:调整后的 video 配置、SDXL 出图宽、SDXL 出图高。
     横向: 1920x1080 输出 / 1344x768 出图 (~16:9)
     竖向: 1080x1920 输出 /  768x1344 出图 (~9:16, YouTube Shorts)
@@ -140,22 +149,24 @@ def _resolve_video_cfg(base_vcfg: dict, orientation: str, language: str) -> tupl
         vcfg["out_height"] = 1080
         img_w, img_h = 1344, 768
 
+    tts = dict(vcfg.get("tts", {}))
     if language == "en":
-        tts = dict(vcfg.get("tts", {}))
         tts["voice"] = tts.get("voice_en", EN_VOICE_DEFAULT)
         tts["say_voice"] = tts.get("say_voice_en", EN_SAY_VOICE)
-        tts.setdefault("rate", "+0%")
         tts.setdefault("pitch", "-2Hz")
-        vcfg["tts"] = tts
         vcfg["language"] = "en"
     else:
         vcfg["language"] = "zh"
+    # 语速档覆盖 config 里的 rate(fast=默认最快 / slow=长视频稍慢)。
+    tts["rate"] = SPEED_RATES.get(speed, SPEED_RATES["fast"])
+    vcfg["tts"] = tts
     return vcfg, img_w, img_h
 
 
 def run_long_video(script: str, num_images: int = 25, on_event=None, should_cancel=None,
                    art_positive="", art_negative="", style="horror",
-                   orientation: str = "landscape", language: str = "zh") -> Path:
+                   orientation: str = "landscape", language: str = "zh",
+                   speed: str = "fast") -> Path:
     def emit(event, payload):
         if on_event:
             try:
@@ -172,7 +183,7 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
     ds = DeepSeekClient(config["deepseek"])
     gen_cfg = config["generation"]
     vcfg_base = config.get("video", {})
-    vcfg, img_w, img_h = _resolve_video_cfg(vcfg_base, orientation, language)
+    vcfg, img_w, img_h = _resolve_video_cfg(vcfg_base, orientation, language, speed)
     tts_cfg = vcfg.get("tts", {})
 
     from prompt_generator import to_english_fragment
@@ -267,10 +278,11 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print('Usage: python backend/long_video.py <script.txt> [num_images=25] [orientation=landscape] [language=zh]')
+        print('Usage: python backend/long_video.py <script.txt> [num_images=25] [orientation=landscape] [language=zh] [speed=fast]')
         raise SystemExit(1)
     text = Path(sys.argv[1]).read_text(encoding="utf-8")
     n_img = int(sys.argv[2]) if len(sys.argv) > 2 else 25
     orient = sys.argv[3] if len(sys.argv) > 3 else "landscape"
     lang = sys.argv[4] if len(sys.argv) > 4 else "zh"
-    run_long_video(text, n_img, orientation=orient, language=lang)
+    spd = sys.argv[5] if len(sys.argv) > 5 else "fast"
+    run_long_video(text, n_img, orientation=orient, language=lang, speed=spd)

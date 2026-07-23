@@ -74,6 +74,7 @@ def _run_job(
     style: str,
     orientation: str,
     language: str,
+    speed: str,
 ) -> None:
     def on_event(event: str, payload: Any) -> None:
         with _lock:
@@ -118,6 +119,7 @@ def _run_job(
             style=style,
             orientation=orientation,
             language=language,
+            speed=speed,
         )
         with _lock:
             if _jobs[job_id]["status"] == "running":
@@ -136,6 +138,7 @@ class GenerateRequest(BaseModel):
     style: str = "horror"      # horror / realistic / none
     orientation: str = "landscape"  # landscape (YouTube 16:9) | portrait (Shorts 9:16)
     language: str = "zh"       # zh (中文) | en (English)
+    speed: str = "fast"        # fast (默认最快) | slow (适中,长视频)
 
 
 @app.post("/api/generate")
@@ -148,14 +151,16 @@ def generate(req: GenerateRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="orientation 必须是 landscape 或 portrait")
     if req.language not in ("zh", "en"):
         raise HTTPException(status_code=400, detail="language 必须是 zh 或 en")
+    if req.speed not in ("fast", "slow"):
+        raise HTTPException(status_code=400, detail="speed 必须是 fast 或 slow")
 
     job_id = _new_job(script)
-    logger.info("Job %s created (frames=%d, style=%s, orientation=%s, lang=%s)",
-                job_id, frames, req.style, req.orientation, req.language)
+    logger.info("Job %s created (frames=%d, style=%s, orientation=%s, lang=%s, speed=%s)",
+                job_id, frames, req.style, req.orientation, req.language, req.speed)
     threading.Thread(
         target=_run_job,
         args=(job_id, script, frames, req.art_positive, req.art_negative,
-              req.style, req.orientation, req.language),
+              req.style, req.orientation, req.language, req.speed),
         daemon=True,
     ).start()
     return {"job_id": job_id}

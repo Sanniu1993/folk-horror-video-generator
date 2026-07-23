@@ -114,32 +114,68 @@ def _edge_tts(text: str, out_mp3: Path, voice: str, rate: str, pitch: str) -> No
     raise RuntimeError(f"edge-tts failed after {TTS_RETRIES} attempts: {last_exc}")
 
 
+def _trim_silence(src: Path, pad: float, threshold_db: int = 35) -> None:
+    """就地压缩音频里所有静音(首尾 + 句内逗号/句号处),每处保留 `pad` 秒。
+
+    句与句拼接、以及 TTS 在句尾/逗号处自带的停顿会累积成过长的间隔。用一次
+    ffmpeg silenceremove:
+      - start_periods=1  裁掉开头静音
+      - stop_periods=-1  把之后每一段 ≥stop_duration 的静音收紧到 `pad` 秒
+        (含句内停顿与结尾静音)
+    threshold 用 -35dB 以抓住 TTS 句尾的低音量拖尾。失败则保留原文件。"""
+    if pad < 0:
+        pad = 0.0
+    tmp = src.with_name(src.stem + "_trim" + src.suffix)
+    af = (f"silenceremove=start_periods=1:start_silence={pad}:"
+          f"start_threshold=-{threshold_db}dB:"
+          f"stop_periods=-1:stop_silence={pad}:stop_duration=0.08:"
+          f"stop_threshold=-{threshold_db}dB:detection=peak")
+    proc = subprocess.run(
+        [FFMPEG, "-y", "-i", str(src), "-af", af, str(tmp)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        tmp.replace(src)
+    else:
+        logger.warning("silence trim skipped for %s: %s", src.name, proc.stderr[-200:])
+        tmp.unlink(missing_ok=True)
+
+
 def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]] = None):
     """Speak `text`; return (path, duration_seconds).
 
     首选 edge-tts(神经语音,自然);带重试。仅当重试全部失败、且未强制禁用兜底
     (`allow_say_fallback`)时,才降级到机械的 macOS `say`,并明确告警——因为半段
-    神经声半段机械声会很突兀。"""
+    神经声半段机械声会很突兀。
+
+    默认裁掉每句首尾静音(`trim_silence`,两端各留 `gap_seconds` 秒),避免句间
+    停顿过长;时长在裁剪后重新测量,字幕时序自动对齐。"""
     cfg = tts_cfg or {}
     out_base.parent.mkdir(parents=True, exist_ok=True)
+    out: Optional[Path] = None
     if cfg.get("engine", TTS_ENGINE) == "edge":
         out = out_base.with_suffix(".mp3")
         try:
             _edge_tts(text, out, cfg.get("voice", TTS_VOICE),
                       cfg.get("rate", TTS_RATE), cfg.get("pitch", TTS_PITCH))
-            return out, _duration(out)
         except Exception as exc:
+            out = None
             if not cfg.get("allow_say_fallback", True):
                 # 宁可整段失败也不用机械声(神经声一致性优先)。
                 raise RuntimeError(
                     f"edge-tts 合成失败且已禁用 say 兜底:{exc}。"
                     "请检查网络/代理是否能访问微软 edge-tts。") from exc
             logger.warning("edge-tts 最终失败(%s);降级到 macOS say(音质会明显变机械)", exc)
-    out = out_base.with_suffix(".aiff")
-    proc = subprocess.run(["say", "-v", cfg.get("say_voice", SAY_VOICE), text,
-                           "-o", str(out)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RuntimeError(f"say failed: {proc.stderr[-300:]}")
+    if out is None:
+        out = out_base.with_suffix(".aiff")
+        proc = subprocess.run(["say", "-v", cfg.get("say_voice", SAY_VOICE), text,
+                               "-o", str(out)], capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"say failed: {proc.stderr[-300:]}")
+
+    if cfg.get("trim_silence", True):
+        _trim_silence(out, float(cfg.get("gap_seconds", 0.06)),
+                      int(cfg.get("trim_threshold_db", 35)))
     return out, _duration(out)
 
 
@@ -318,6 +354,19 @@ def build_narrated_video(images: list[Path], lines: list[str], out_path: Path,
 
 # --- long narrated video (per-line SRT subtitles) --------------------------
 
+def _subtitle_cues(text: str, max_chars: int, max_lines: int = 2) -> list[str]:
+    """把一句(可能很长的)旁白拆成若干"字幕屏",每屏最多 `max_lines` 行。
+
+    欧美观看习惯是一次只显示 1–2 行、随语音滚动;整句一次铺 5–6 行不符合习惯。
+    先按语言换行(`_wrap_cjk`:中文逐字、英文按词),再每 `max_lines` 行打包成一屏。
+    返回每屏文本(行内用 ASS 的 \\N 连接)。"""
+    disp_lines = _wrap_cjk(text, max_chars)
+    cues = []
+    for i in range(0, len(disp_lines), max_lines):
+        cues.append("\\N".join(disp_lines[i:i + max_lines]))
+    return cues or [text.strip()]
+
+
 def _fmt_ass(sec: float) -> str:
     h = int(sec // 3600)
     m = int((sec % 3600) // 60)
@@ -352,6 +401,7 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
     font_size = int(cfg.get("subtitle_font_size", max(28, p["h"] // 24)))
     margin_v = int(cfg.get("subtitle_margin_v", int(p["h"] * 0.07)))
     max_chars = max(8, int(p["w"] * 0.86 / font_size))
+    max_sub_lines = int(cfg.get("subtitle_max_lines", 2))   # 每屏最多几行(欧美习惯 1–2)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     work = out_path.parent / "_long"
@@ -365,9 +415,17 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
         clips.append(clip)
         for l in seg["lines"]:
             all_audio.append(l["audio"])
-            text = "\\N".join(_wrap_cjk(l["text"], max_chars))
-            events.append(f"Dialogue: 0,{_fmt_ass(t)},{_fmt_ass(t + l['dur'])},"
-                          f"Default,,0,0,0,,{text}")
+            # 一句旁白拆成多屏(每屏 ≤max_sub_lines 行),按字符数比例分摊该句时长,
+            # 让字幕随语音分段滚动而不是整句一次铺满。音画总时长不变,保持同步。
+            cues = _subtitle_cues(l["text"], max_chars, max_sub_lines)
+            weights = [max(1, len(c.replace("\\N", ""))) for c in cues]
+            wsum = sum(weights) or 1
+            ct = t
+            for c, w in zip(cues, weights):
+                cdur = l["dur"] * w / wsum
+                events.append(f"Dialogue: 0,{_fmt_ass(ct)},{_fmt_ass(ct + cdur)},"
+                              f"Default,,0,0,0,,{c}")
+                ct += cdur
             idx += 1; t += l["dur"]
 
     concat = work / "clips.txt"

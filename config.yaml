@@ -78,9 +78,12 @@ video:
     # needs internet); falls back to macOS `say` offline.
     engine: "edge"
     voice: "zh-CN-YunjianNeural"   # 云健:小说/旁白男声。其他:YunxiNeural / YunyangNeural(新闻) / XiaoxiaoNeural(女声)
-    rate: "+0%"                    # 语速。正数更快(+10%)、负数更慢(-8%)
+    rate: "+15%"                   # 语速。正数更快(+15%)、负数更慢(-8%)
     pitch: "-2Hz"
     say_voice: "Tingting"          # offline fallback
+    trim_silence: true             # 压缩静音:句尾/句内停顿都收紧,避免过长间隔
+    gap_seconds: 0.03              # 每处静音保留的秒数(越小衔接越紧;0 = 几乎无停顿)
+    trim_threshold_db: 35          # 静音判定阈值(dB)。调大(如 40)更保守,调小(如 30)切得更狠
 
 logging:
   # Console level (the file always logs at DEBUG). Override with LOG_LEVEL env.

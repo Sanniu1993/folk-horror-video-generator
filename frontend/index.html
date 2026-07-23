@@ -157,8 +157,20 @@
       <div class="field">
         <label class="label">分镜图数量</label>
         <select id="frames">
-          <option>5</option><option>10</option><option>15</option>
-          <option>20</option><option selected>25</option><option>30</option><option>40</option>
+          <option selected>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option><option>7</option><option>8</option>
+          <option>9</option><option>10</option><option>11</option><option>12</option>
+          <option>13</option><option>14</option><option>15</option><option>16</option>
+          <option>17</option><option>18</option><option>19</option><option>20</option>
+          <option>21</option><option>22</option><option>23</option><option>24</option>
+          <option>25</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label">语速</label>
+        <select id="speed">
+          <option value="fast" selected>快速(默认)</option>
+          <option value="slow">适中 · 长视频</option>
         </select>
       </div>
     </div>
@@ -257,6 +269,7 @@ async function start() {
         art_negative: $("artneg").value,
         style: $("style").value,
         orientation, language,
+        speed: $("speed").value,
       }),
     });
     if (!r.ok) {
