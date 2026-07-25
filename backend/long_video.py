@@ -26,7 +26,7 @@ from pathlib import Path
 from comfy_client import ComfyClient, RunCancelled
 from deepseek_client import DeepSeekClient
 from logging_config import setup_logging
-from pipeline import Cancelled, ROOT, _dump, load_config
+from pipeline import Cancelled, ROOT, _dump, _slugify, load_config
 from prompt_generator import _style_suffix, art_note
 from video_builder import build_long_video, synth_narration
 
@@ -90,6 +90,32 @@ Schema: {{ "prompts": [{{"index": 1, "prompt": "..."}}] }}   // exactly {n} item
 EN_VOICE_DEFAULT = "en-US-ChristopherNeural"
 EN_SAY_VOICE = "Samantha"   # macOS 离线兜底(几乎所有 Mac 都有);仅 edge-tts 彻底失败时才用
 
+# 各非中文语种的 TTS 音色(edge-tts 神经语音 + macOS say 离线兜底)。
+# 中文(zh)沿用 config.yaml 里的默认音色,不在此表。
+LANG_VOICES = {
+    "en": {"voice": EN_VOICE_DEFAULT,      "say": EN_SAY_VOICE},
+    "ja": {"voice": "ja-JP-KeitaNeural",   "say": "Kyoko"},   # 日语男声旁白
+    "ko": {"voice": "ko-KR-InJoonNeural",  "say": "Yuna"},    # 韩语男声旁白
+}
+
+
+def _chinese_title(ds: DeepSeekClient, script: str) -> str:
+    """让 DeepSeek 给剧本起一个简短中文标题(用于输出文件夹名,方便查找)。
+    剧本可为任意语种,标题统一中文。失败返回空串(退回纯时间戳命名)。"""
+    try:
+        res = ds.chat_json(
+            "你根据下面的剧本起一个简短的中文标题,用作文件名:6~12 个汉字、"
+            "概括主题、不含标点/空格/引号。直接输出紧凑 JSON,前后不要有多余空白。"
+            "格式:{\"title\": \"中文标题\"}",
+            script[:2000],
+            temperature=0.3,
+            max_tokens=512,
+        )
+        return (res.get("title") or "").strip()[:20]
+    except Exception as exc:
+        logger.warning("中文标题生成失败(退回时间戳命名):%s", exc)
+        return ""
+
 
 def _split_lines(script: str) -> list[str]:
     """按换行和中英文句末标点粗略拆句;既支持中文剧本(按行/句号)也支持英文段落。"""
@@ -150,13 +176,12 @@ def _resolve_video_cfg(base_vcfg: dict, orientation: str, language: str,
         img_w, img_h = 1344, 768
 
     tts = dict(vcfg.get("tts", {}))
-    if language == "en":
-        tts["voice"] = tts.get("voice_en", EN_VOICE_DEFAULT)
-        tts["say_voice"] = tts.get("say_voice_en", EN_SAY_VOICE)
+    if language in LANG_VOICES:      # en / ja / ko:切换到对应语种音色
+        tts["voice"] = LANG_VOICES[language]["voice"]
+        tts["say_voice"] = LANG_VOICES[language]["say"]
         tts.setdefault("pitch", "-2Hz")
-        vcfg["language"] = "en"
-    else:
-        vcfg["language"] = "zh"
+    # 中文(zh)沿用 config.yaml 里的默认音色,不覆盖。
+    vcfg["language"] = language
     # 语速档覆盖 config 里的 rate(fast=默认最快 / slow=长视频稍慢)。
     tts["rate"] = SPEED_RATES.get(speed, SPEED_RATES["fast"])
     vcfg["tts"] = tts
@@ -198,8 +223,12 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
     run_dir = None
     try:
         check_cancel()
+        # 先起一个中文标题拼进文件夹名(方便在 outputs 里辨认),失败则退回纯时间戳。
+        slug = _slugify(_chinese_title(ds, script))
+        name = f"{datetime.now():%Y%m%d_%H%M%S}_{slug}_long" if slug and slug != "story" \
+            else f"{datetime.now():%Y%m%d_%H%M%S}_long"
         emit("stage", {"step": 1, "total": 4, "label": "配音(逐句)"})
-        run_dir = ROOT / config["output_dir"] / f"{datetime.now():%Y%m%d_%H%M%S}_long"
+        run_dir = ROOT / config["output_dir"] / name
         audio_dir = run_dir / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
         line_items = []
@@ -215,11 +244,14 @@ def run_long_video(script: str, num_images: int = 25, on_event=None, should_canc
         groups = _group_lines(lines, [li["dur"] for li in line_items], num_images)
         emit("stage", {"step": 2, "total": 4, "label": "分镜规划"})
 
-        style_system = STYLE_SYSTEM_EN if language == "en" else STYLE_SYSTEM_ZH
-        prompt_system = (PROMPT_SYSTEM_EN if language == "en" else PROMPT_SYSTEM_ZH).format(n=len(groups))
-        user_header_char = "Characters (use verbatim when a character appears):" if language == "en" \
+        # 中文剧本用 ZH 版(强制中式设定);其余语种(en/ja/ko)用通用版,
+        # 让 LLM 从剧本本身推断人物/场景设定,图像 prompt 仍输出英文。
+        non_zh = language != "zh"
+        style_system = STYLE_SYSTEM_EN if non_zh else STYLE_SYSTEM_ZH
+        prompt_system = (PROMPT_SYSTEM_EN if non_zh else PROMPT_SYSTEM_ZH).format(n=len(groups))
+        user_header_char = "Characters (use verbatim when a character appears):" if non_zh \
             else "角色(出现时按此英文描述):"
-        user_header_seg = "Segments (%d total):" if language == "en" else "分段(共 %d 段):"
+        user_header_seg = "Segments (%d total):" if non_zh else "分段(共 %d 段):"
 
         bible = ds.chat_json(style_system, "SCRIPT:\n" + script + art_note(art_pos), temperature=0.5)
         suffix = _style_suffix(bible.get("style_bible", {}), style)

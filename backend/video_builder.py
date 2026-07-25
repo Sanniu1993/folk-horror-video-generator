@@ -181,29 +181,43 @@ def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]]
 
 # --- subtitles -------------------------------------------------------------
 
-_CJK_RE = __import__("re").compile(r"[一-鿿]")
+_re = __import__("re")
+# 中文汉字 + 日文假名(平假名/片假名):全角、无空格 → 逐字换行。
+_CJK_JP_RE = _re.compile(r"[一-鿿぀-ゟ゠-ヿ]")
+# 韩文谚文:全角但词间有空格 → 按单词换行,但按全角宽度限制。
+_HANGUL_RE = _re.compile(r"[가-힣]")
+
+
+def _wrap_words(text: str, limit: int) -> list[str]:
+    """按空格分词换行,每行不超过 limit 个字符。"""
+    lines, cur = [], ""
+    for word in text.split():
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= limit:
+            cur += " " + word
+        else:
+            lines.append(cur); cur = word
+    if cur:
+        lines.append(cur)
+    return lines
 
 
 def _wrap_cjk(text: str, max_chars: int) -> list[str]:
-    """Wrap subtitle text. CJK text breaks per-char (with punctuation preference);
-    non-CJK text (English, etc.) wraps on word boundaries."""
+    """按语言换行字幕:
+    - 中文/日文(全角无空格):逐字换行,优先在标点断行;
+    - 韩文(全角有空格):按词换行,行宽用全角上限 max_chars;
+    - 拉丁语系(英文等,窄字符有空格):按词换行,行宽放宽到 ~2x。"""
     text = text.strip()
     if len(text) <= max_chars:
         return [text]
-    # 英文/纯拉丁按单词换行(允许 ~2x 字符宽,因为拉丁字符窄)
-    if not _CJK_RE.search(text):
-        limit = max(max_chars * 2, 20)
-        lines, cur = [], ""
-        for word in text.split():
-            if not cur:
-                cur = word
-            elif len(cur) + 1 + len(word) <= limit:
-                cur += " " + word
-            else:
-                lines.append(cur); cur = word
-        if cur:
-            lines.append(cur)
-        return lines
+    # 韩文:全角但有空格,按词换行、全角宽度
+    if _HANGUL_RE.search(text) and not _CJK_JP_RE.search(text):
+        return _wrap_words(text, max(max_chars, 6))
+    # 拉丁语系:窄字符,按词换行、放宽到 ~2x
+    if not _CJK_JP_RE.search(text):
+        return _wrap_words(text, max(max_chars * 2, 20))
+    # 中文/日文:逐字换行
     lines, cur = [], ""
     for ch in text:
         cur += ch
@@ -374,7 +388,19 @@ def _fmt_ass(sec: float) -> str:
     return f"{h:d}:{m:02d}:{s:05.2f}"
 
 
-def _ass_header(w: int, h: int, font_size: int, margin_v: int) -> str:
+# 按语言选字幕字体(family 名给 libass;都在 /System/Library/Fonts):
+#   zh -> Heiti SC(中文);ja -> Hiragino Sans GB(含假名+汉字);
+#   ko -> Apple SD Gothic Neo(谚文);en/其他 -> Heiti SC 也含拉丁字形。
+SUBTITLE_FONTS = {
+    "zh": "Heiti SC",
+    "en": "Heiti SC",
+    "ja": "Hiragino Sans GB",
+    "ko": "Apple SD Gothic Neo",
+}
+
+
+def _ass_header(w: int, h: int, font_size: int, margin_v: int,
+                fontname: str = "Heiti SC") -> str:
     # PlayResX/Y pinned to the video size so FontSize is in real pixels
     # (SRT would default to a 288-tall canvas and blow the font up ~3.7x).
     return (
@@ -385,7 +411,7 @@ def _ass_header(w: int, h: int, font_size: int, margin_v: int) -> str:
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, "
         "ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
         "MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Heiti SC,{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
+        f"Style: Default,{fontname},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,"
         f"&H64000000,1,0,0,0,100,100,0,0,1,3,0,2,{int(w*0.06)},{int(w*0.06)},{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -402,6 +428,7 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
     margin_v = int(cfg.get("subtitle_margin_v", int(p["h"] * 0.07)))
     max_chars = max(8, int(p["w"] * 0.86 / font_size))
     max_sub_lines = int(cfg.get("subtitle_max_lines", 2))   # 每屏最多几行(欧美习惯 1–2)
+    sub_font = SUBTITLE_FONTS.get(cfg.get("language", "zh"), "Heiti SC")  # 按语言选字体
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     work = out_path.parent / "_long"
@@ -440,7 +467,7 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
           "-c:a", "aac", "-b:a", "160k", str(audio)])
 
     ass_file = work / "subs.ass"
-    ass_file.write_text(_ass_header(p["w"], p["h"], font_size, margin_v) + "\n".join(events) + "\n",
+    ass_file.write_text(_ass_header(p["w"], p["h"], font_size, margin_v, sub_font) + "\n".join(events) + "\n",
                         encoding="utf-8")
     subs = f"ass={ass_file.as_posix()}:fontsdir=/System/Library/Fonts"
     _run([FFMPEG, "-y", "-i", str(silent), "-i", str(audio), "-vf", subs,

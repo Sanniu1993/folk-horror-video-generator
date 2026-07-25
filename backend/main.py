@@ -137,7 +137,7 @@ class GenerateRequest(BaseModel):
     art_negative: str = ""
     style: str = "horror"      # horror / realistic / none
     orientation: str = "landscape"  # landscape (YouTube 16:9) | portrait (Shorts 9:16)
-    language: str = "zh"       # zh (中文) | en (English)
+    language: str = "zh"       # zh (中文) | en (English) | ja (日本語) | ko (한국어)
     speed: str = "fast"        # fast (默认最快) | slow (适中,长视频)
 
 
@@ -149,8 +149,8 @@ def generate(req: GenerateRequest) -> dict[str, str]:
     frames = max(1, min(40, req.num_frames))
     if req.orientation not in ("landscape", "portrait"):
         raise HTTPException(status_code=400, detail="orientation 必须是 landscape 或 portrait")
-    if req.language not in ("zh", "en"):
-        raise HTTPException(status_code=400, detail="language 必须是 zh 或 en")
+    if req.language not in ("zh", "en", "ja", "ko"):
+        raise HTTPException(status_code=400, detail="language 必须是 zh / en / ja / ko")
     if req.speed not in ("fast", "slow"):
         raise HTTPException(status_code=400, detail="speed 必须是 fast 或 slow")
 

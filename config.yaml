@@ -6,7 +6,7 @@ deepseek:
   # DeepSeek uses an OpenAI-compatible API.
   # The API key is read from the DEEPSEEK_API_KEY environment variable.
   base_url: "https://api.deepseek.com"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
   temperature: 0.8          # story creation wants some creativity
   analysis_temperature: 0.4 # scene / prompt work wants determinism
 

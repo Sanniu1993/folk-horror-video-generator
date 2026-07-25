@@ -50,7 +50,7 @@ class DeepSeekError(RuntimeError):
 class DeepSeekClient:
     def __init__(self, config: dict[str, Any]) -> None:
         self.base_url = config.get("base_url", "https://api.deepseek.com").rstrip("/")
-        self.model = config.get("model", "deepseek-chat")
+        self.model = config.get("model", "deepseek-v4-flash")
         _load_dotenv()
         self.api_key = os.environ.get("DEEPSEEK_API_KEY")
         if not self.api_key:
