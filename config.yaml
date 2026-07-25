@@ -33,14 +33,17 @@ comfyui:
 
 generation:
   # 出图模型(checkpoints 目录下的文件名)。换模型只改这一处。
-  # RealVisXL V5.0:写实/电影感的 SDXL 微调,明显优于 SDXL base。
-  ckpt_name: "RealVisXL_V5.0_fp16.safetensors"
+  # Lightning 加速版:6~8 步即可出图,约 3.7× 提速(单张 121s→33s)。
+  #   Lightning 专用参数:steps 8 / cfg 2.0 / euler / karras(低步数低 cfg)。
+  # 若要回退高画质标准版,改回下面注释的四个值 + ckpt=RealVisXL_V5.0_fp16:
+  #   steps: 30 / cfg: 6.5 / sampler_name: dpmpp_2m / scheduler: karras
+  ckpt_name: "RealVisXL_V5.0_Lightning_fp16.safetensors"
   num_key_frames: 10        # V1: 10 key frames is enough for a 10-min video
   width: 1024
   height: 1024
-  steps: 30
-  cfg: 6.5
-  sampler_name: "dpmpp_2m"
+  steps: 8                  # Lightning:8 步足够(标准版需 30)
+  cfg: 2.0                  # Lightning:低 cfg(标准版 6.5)
+  sampler_name: "euler"     # euler 每步 1 次评估,比 dpmpp_sde 快近一倍
   scheduler: "karras"
   # A fixed base seed makes runs reproducible; each frame adds its index.
   base_seed: 20260721

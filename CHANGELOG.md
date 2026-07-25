@@ -7,6 +7,20 @@
 
 ## 2026-07-23
 
+### 出图再提速:视频出图分辨率 768/1344 → 640/1152(再快约 1.5×)
+
+- **改了什么**:`long_video._resolve_video_cfg` 的 SDXL 出图尺寸由 竖 768×1344 / 横 1344×768 降到 竖 640×1152 / 横 1152×640(约 0.71× 像素);输出仍 1080p。
+- **为什么**:实测 Mac MPS 出图耗时随像素数强相关(512×896 只需 ~14s vs 768×1344 ~50s+),分辨率是 Lightning 之后最有效的杠杆。用户主要发 YouTube,要"不伤观看体验前提下尽量快"——640 是甜点:比 768 快 ~1.4×、经 Ken Burns 2× 放大后 1080p 观感无差、且不低于 SDXL 稳定线(512 会偏软+翻车率高,不取)。
+- **如何验证**:640×1152 出图实拍——灯笼锐利、人物清晰、氛围饱满,YouTube 画质无损。
+- **注意**:连续批量出图时 Mac 会**热节流**,单张耗时会从 ~33s 漂到 50s+,这是硬件散热限制,与参数无关;要恒定高速需云 GPU。
+
+### 出图提速:切换 RealVisXL Lightning(单张 121s→~33s,约 3.7×)
+
+- **改了什么**:下载 `RealVisXL_V5.0_Lightning_fp16.safetensors`(6.94GB,SG161222)到 ComfyUI checkpoints;`config.yaml` 的 generation 段切到 Lightning 参数:`ckpt`→Lightning、`steps 30→8`、`cfg 6.5→2.0`、`sampler dpmpp_2m→euler`(euler 每步 1 次评估,比 dpmpp_sde 快近一倍),scheduler 仍 karras。旧值在注释里保留便于回退。新增 `backend/bench_render.py` 出图基准脚本。
+- **为什么**:Mac MPS 下单张 ~121s,长视频/批量太慢(120 张≈4h)。Lightning 蒸馏模型 6~8 步即可出图。
+- **如何验证**:同 prompt 实测 —— 标准 30 步 121.3s;Lightning 8 步 euler 暖机 ~33s(冷启含模型加载 ~55s);画质对比:cfg 1.5 偏软雾重,**cfg 2.0 追平 30 步基准**(锐利、细节到位)。按此 120 张≈1.1h、40 张≈22min。
+- **注意**:Lightning 参数(低步数低 cfg)与标准版绑定,回退标准模型时须同时改回 steps/cfg/sampler。
+
 ### 输出文件夹按中文标题命名(方便查找)
 
 - **改了什么**:`long_video` 新增 `_chinese_title()`——生成前用 DeepSeek 给剧本起一个 6~12 字中文标题,经 `_slugify` 拼进输出文件夹名,如 `20260725_中国僵尸起源传说_long/`;任意语种剧本(中/英/日/韩)标题都统一中文。DeepSeek 失败或空标题时回退纯时间戳命名,不影响生成。

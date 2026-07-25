@@ -161,19 +161,21 @@ SPEED_RATES = {
 def _resolve_video_cfg(base_vcfg: dict, orientation: str, language: str,
                        speed: str = "fast") -> tuple[dict, int, int]:
     """依据画幅返回:调整后的 video 配置、SDXL 出图宽、SDXL 出图高。
-    横向: 1920x1080 输出 / 1344x768 出图 (~16:9)
-    竖向: 1080x1920 输出 /  768x1344 出图 (~9:16, YouTube Shorts)
+    横向: 1920x1080 输出 / 1152x640 出图 (~16:9)
+    竖向: 1080x1920 输出 /  640x1152 出图 (~9:16, YouTube Shorts)
+    出图分辨率从 768/1344 降到 640/1152(约 0.71× 像素):Mac MPS 下再快约 1.5×,
+    经 Ken Burns 2× 放大到 1080p 输出后画质肉眼无差,SDXL 也不至于低分辨率翻车。
     英文剧本会覆盖 TTS 音色。
     """
     vcfg = dict(base_vcfg or {})
     if orientation == "portrait":
         vcfg["out_width"] = 1080
         vcfg["out_height"] = 1920
-        img_w, img_h = 768, 1344
+        img_w, img_h = 640, 1152
     else:
         vcfg["out_width"] = 1920
         vcfg["out_height"] = 1080
-        img_w, img_h = 1344, 768
+        img_w, img_h = 1152, 640
 
     tts = dict(vcfg.get("tts", {}))
     if language in LANG_VOICES:      # en / ja / ko:切换到对应语种音色
