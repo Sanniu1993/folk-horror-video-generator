@@ -31,7 +31,9 @@ import yaml
 from comfy_client import ComfyClient, RunCancelled
 from deepseek_client import DeepSeekClient
 from logging_config import setup_logging
-from prompt_generator import _style_suffix, generate_prompts, to_english_fragment
+from memory_client import make_enricher, make_ref_provider
+from prompt_generator import (CJK_COSTUME_GUARD, _style_suffix, anachronism_negative,
+                              generate_prompts, to_english_fragment)
 from scene_planner import plan_scenes
 from story_generator import generate_story
 
@@ -93,7 +95,9 @@ def run(
     # both the DeepSeek planning and the SDXL prompt/negative layers.
     art_pos = to_english_fragment(ds, art_pos)
     art_neg = to_english_fragment(ds, art_neg)
-    negative = config["negative_prompt"] + ((", " + art_neg) if art_neg.strip() else "")
+    # 文本模式的故事按设计就是中式背景,民族服饰纠偏无条件加(见 CJK_COSTUME_GUARD 注释)。
+    negative = (config["negative_prompt"] + ", " + CJK_COSTUME_GUARD
+                + ((", " + art_neg) if art_neg.strip() else ""))
     run_dir: Path | None = None
 
     try:
@@ -136,10 +140,26 @@ def run(
         # --- Step 3: image prompts (scene + fixed style bible) -----------
         logger.info("[3/4] Prompt generation")
         emit("stage", {"step": 3, "total": 4, "label": "Prompt 生成"})
+        # 可选:接入视觉记忆库,给每个分镜注入检索到的民俗视觉细节。
+        # 未配置或 enabled=false 时 make_enricher 返回 no-op,行为与原来一致(松耦合)。
+        vm_cfg = config.get("visual_memory", {})
+        mem_context = " ".join(
+            str(x) for x in (art_pos, story.get("setting", ""), story.get("era", "")) if x
+        )
+        enrich_fn = make_enricher(vm_cfg, context=mem_context)
         prompts = generate_prompts(
             ds, story, scenes, temperature=ds_cfg.get("analysis_temperature", 0.4),
-            art_positive=art_pos, style=style,
+            art_positive=art_pos, style=style, enrich_fn=enrich_fn,
         )
+        if vm_cfg.get("enabled"):
+            hits = sum(1 for p in prompts if p.get("memory_fragment"))
+            logger.info("      visual-memory enrichment on: %d/%d scenes enriched",
+                        hits, len(prompts))
+        # 该年代不该出现的东西进负向(story.world 同源);story 没给就保持原负向。
+        anachro = anachronism_negative(story.get("anachronisms"))
+        if anachro:
+            negative = negative + ", " + anachro
+            logger.info("      年代负向: %s", anachro)
         _dump(run_dir / "prompts.json", {"prompts": prompts})
         emit("prompts", prompts)
         check_cancel()
@@ -179,6 +199,15 @@ def run(
         # Which characters appear in each scene (for picking a reference).
         chars_by_scene = {sc["scene_id"]: sc.get("characters", []) for sc in scenes}
 
+        # V2 可选:把记忆库检索到的图当 IPAdapter 参考图。按 scene 预取(内容更全),
+        # 未启用 use_reference_images 时 provider 是 no-op,scene_refs 全空(松耦合、fail-open)。
+        ref_provider = make_ref_provider(vm_cfg, context=mem_context)
+        scene_refs = {sc["scene_id"]: ref_provider(sc) for sc in scenes}
+        if vm_cfg.get("use_reference_images"):
+            n_ref = sum(1 for v in scene_refs.values() if v)
+            logger.info("      visual-memory reference images on: %d/%d scenes have refs",
+                        n_ref, len(scenes))
+
         total = len(prompts)
         rendered = 0
         for i, p in enumerate(prompts):
@@ -194,6 +223,7 @@ def run(
             logger.info("[4/4] frame %d/%d (%s, seed %d)%s", i + 1, total, prefix, seed,
                         f" [ref: {ref.stem}]" if ref else "")
             emit("frame_start", {"scene_id": p["scene_id"], "index": i + 1, "total": total})
+            mem_refs = scene_refs.get(p["scene_id"]) or None
             try:
                 dest = comfy.generate(
                     positive=p["prompt"],
@@ -205,7 +235,8 @@ def run(
                     filename_prefix=prefix,
                     out_dir=images_dir,
                     should_cancel=should_cancel,  # interrupt mid-render if asked
-                    reference_image=ref,
+                    reference_image=ref,           # 角色一致性参考(V1 特性)
+                    references=mem_refs,            # V2:记忆库参考图(存在则优先走多图 IPAdapter 链)
                 )
                 rendered += 1
                 logger.info("      saved %s", dest.name)
@@ -249,7 +280,8 @@ def _generate_character_refs(
     """Render one clean portrait per character to use as an IPAdapter reference."""
     refs: dict[str, Path] = {}
     chars_dir = run_dir / "characters"
-    suffix = _style_suffix(story.get("style_bible", {}), style)
+    suffix = _style_suffix(story.get("style_bible", {}), style,
+                           auto_tail=config.get("base_style_tail"))
     characters = story.get("characters", [])
     for idx, c in enumerate(characters):
         if should_cancel is not None and should_cancel():

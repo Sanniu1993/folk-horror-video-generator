@@ -57,6 +57,13 @@
   }
   .field select option { background: var(--panel-2); color: var(--text); }
 
+  .memtoggle { display: flex; align-items: center; gap: 10px; margin-top: 14px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 11px 14px; cursor: pointer; flex-wrap: wrap; }
+  .memtoggle input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+  .memtoggle .mt-title { font-size: 14px; color: var(--text); }
+  .memtoggle .mt-hint { color: var(--muted); font-size: 12px; flex-basis: 100%; margin-left: 26px; }
+
   .actions { display: flex; gap: 12px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 12px; }
 
@@ -83,6 +90,9 @@
   .videobox.portrait video { max-width: 360px; }
 
   .status { margin: 24px 0 8px; display: none; }
+  .timer { color: var(--accent-2); font-size: 13px; margin-bottom: 10px;
+    font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+  .timer.done { color: #3fae6a; }
   .stages { display: flex; gap: 8px; flex-wrap: wrap; }
   .stage {
     flex: 1; min-width: 120px; background: var(--panel); border: 1px solid var(--border);
@@ -119,8 +129,64 @@
     color: var(--muted); font-size: 13px; border-style: dashed; }
   .card.placeholder.busy { animation: pulse 1.4s infinite; }
 
+  /* 人工确认闸口 */
+  .reviewbar { display: none; background: var(--panel); border: 1px solid var(--accent-2);
+    border-radius: 12px; padding: 14px 18px; margin-top: 18px; }
+  .reviewbar.on { display: block; }
+  .reviewbar .rv-title { font-size: 14px; color: var(--accent-2); letter-spacing: 1px; }
+  .reviewbar .rv-hint { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
+  .reviewbar button.approve { background: var(--accent-2); color: #10161c; font-weight: 600; }
+  .card.review { aspect-ratio: auto; display: flex; flex-direction: column; }
+  .card.review .thumb { position: relative; aspect-ratio: 16/9; }
+  .card.review.portrait .thumb { aspect-ratio: 9/16; }
+  .card.review .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card.review .rv-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .card.review textarea { width: 100%; box-sizing: border-box; resize: vertical;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
+  .card.review .rv-row { display: flex; gap: 6px; align-items: center; }
+  .card.review button { padding: 5px 10px; font-size: 12px; }
+  .card.review .att { color: var(--muted); font-size: 11px; }
+  .card.review details.pv > summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+  .card.review details.pv .ptxt { color: var(--muted); font-size: 11px; word-break: break-word;
+    font-family: ui-monospace, monospace; margin-top: 4px; max-height: 90px; overflow: auto; }
+
+  /* 温和提示(建议类,非错误)——与红色的 .err 区分开 */
+  .notice { display: none; background: #241f10; border: 1px solid #6b5a1e;
+    color: #e2cf92; border-radius: 8px; padding: 10px 14px; margin-top: 14px; font-size: 13px; }
+
   .err { display: none; background: #2a1414; border: 1px solid var(--accent);
     color: #f0b8b8; border-radius: 8px; padding: 12px 14px; margin-top: 18px; font-size: 14px; }
+
+  /* RAG 调试面板 */
+  .ragbox { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 18px; margin-top: 18px; }
+  details.rag { border: 1px solid var(--border); border-radius: 8px; margin-top: 8px;
+    background: var(--panel-2); }
+  details.rag > summary { cursor: pointer; padding: 9px 12px; font-size: 13px; color: var(--text);
+    list-style: none; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  details.rag > summary::-webkit-details-marker { display: none; }
+  details.rag > summary .sid { background: var(--accent); color: #fff; border-radius: 5px;
+    padding: 1px 8px; font-size: 12px; }
+  details.rag > summary .cnt { color: var(--accent-2); font-family: ui-monospace, monospace; font-size: 12px; }
+  details.rag > summary .none { color: var(--muted); font-size: 12px; }
+  .rag-body { padding: 4px 14px 14px; font-size: 13px; }
+  .rag-body .q { color: var(--muted); font-size: 12px; margin: 4px 0 10px;
+    font-family: ui-monospace, monospace; word-break: break-all; }
+  .rag-h { display: flex; gap: 10px; padding: 7px 0; border-top: 1px dashed var(--border); align-items: flex-start; }
+  .rag-h.filtered { opacity: .5; }
+  .rag-h .sc { font-family: ui-monospace, monospace; color: var(--accent-2); min-width: 52px; }
+  .rag-h .ti { color: var(--text); }
+  .rag-h .tg { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .rag-h .used { color: #3fae6a; } .rag-h .drop { color: var(--muted); }
+  .rag-inject { margin-top: 10px; padding: 8px 10px; background: rgba(127,176,216,.06);
+    border: 1px solid var(--border); border-radius: 6px; }
+  .rag-inject .lab { color: var(--accent-2); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+  .rag-inject code { color: #cfe3f2; font-size: 12px; }
+  .rag-refs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .rag-refs figure { margin: 0; width: 84px; }
+  .rag-refs img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid var(--accent-2); }
+  .rag-refs figcaption { font-size: 10px; color: var(--muted); text-align: center; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -151,7 +217,8 @@
       <div class="field">
         <label class="label">风格</label>
         <select id="style">
-          <option value="horror" selected>恐怖(默认)</option>
+          <option value="auto" selected>跟随剧情(默认)</option>
+          <option value="horror">全片统一恐怖调</option>
           <option value="realistic">写实 / 纪实</option>
           <option value="none">无(纯描述)</option>
         </select>
@@ -180,6 +247,18 @@
       </div>
     </div>
 
+    <label class="memtoggle" for="usememory">
+      <input type="checkbox" id="usememory" checked />
+      <span class="mt-title">🏮 启用民俗视觉记忆库(folk-horror-memory)</span>
+      <span class="mt-hint">按分镜检索真实民俗素材,把视觉细节注入画面。默认开启。需先启动记忆库服务(默认 http://127.0.0.1:8100);未启动会自动跳过并在上方给出提示,不影响出图。</span>
+    </label>
+
+    <label class="memtoggle" for="review">
+      <input type="checkbox" id="review" checked />
+      <span class="mt-title">🖐 出图后先人工确认(可单张重出)</span>
+      <span class="mt-hint">分镜图全部出完后暂停,不立即合成视频:可以逐张检查,对不满意的填写改进要求单独重出,确认无误再点「合成视频」。</span>
+    </label>
+
     <details class="art">
       <summary>🎨 美术设定(约束年代 / 服饰 / 环境 / 道具)</summary>
       <label class="alabel">要什么(正向)</label>
@@ -192,14 +271,17 @@
     <div class="actions">
       <button id="go">生成</button>
       <button id="stop" class="stop" style="display:none">■ 停止</button>
-      <span class="hint" style="margin: 0">建议:先用 5–10 张验证风格,再上 25/30 张。</span>
+      <span class="hint" style="margin: 0">建议:先用 5–10 张验证风格,再上 25/30 张。
+        选几张就出几张;若一张图要覆盖的旁白过长(约 &gt;25 秒),开跑后会给一条建议张数的提示。</span>
     </div>
   </div>
 
   <div class="status" id="status">
+    <div class="timer" id="timer">⏱ 用时 00:00</div>
     <div class="stages" id="stages"></div>
   </div>
 
+  <div class="notice" id="notice"></div>
   <div class="err" id="err"></div>
 
   <div class="story" id="story">
@@ -213,7 +295,20 @@
     <video id="player" controls playsinline></video>
   </div>
 
+  <div class="reviewbar" id="reviewbar">
+    <div class="rv-title">🖐 分镜图已出完 — 请确认</div>
+    <div class="rv-hint">逐张检查下面的分镜图。不满意的,在该张下面填「改进要求」(中文即可)再点「重出这张」;
+      也可以展开直接改英文提示词。重出会换一个新种子,所以即使不填要求也会得到不一样的画面。
+      全部满意后点右边的按钮开始合成视频。</div>
+    <button id="approve" class="approve">✓ 确认无误,合成视频</button>
+  </div>
+
   <div class="grid" id="grid"></div>
+
+  <div class="ragbox" id="ragbox" style="display:none">
+    <div class="section-title">🔍 RAG 检索调试(每镜头命中与对生成的贡献)</div>
+    <div id="rag-list"></div>
+  </div>
 </div>
 
 <script>
@@ -222,9 +317,33 @@ let timer = null;
 let currentJob = null;
 let expectedFrames = 25;
 let currentOrientation = "landscape";
+let startTime = null, timerInterval = null;
 
 $("go").addEventListener("click", start);
 $("stop").addEventListener("click", stop);
+$("approve").addEventListener("click", approve);
+
+function fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60), ss = s % 60;
+  return String(m).padStart(2, "0") + ":" + String(ss).padStart(2, "0");
+}
+function startTimer() {
+  startTime = Date.now();
+  $("timer").classList.remove("done");
+  $("timer").textContent = "⏱ 用时 00:00";
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    $("timer").textContent = "⏱ 用时 " + fmtElapsed(Date.now() - startTime);
+  }, 500);
+}
+function stopTimer(label) {
+  clearInterval(timerInterval); timerInterval = null;
+  if (startTime == null) return;
+  const total = fmtElapsed(Date.now() - startTime);
+  $("timer").classList.add("done");
+  $("timer").textContent = "✓ " + (label || "总用时") + " " + total;
+}
 
 function setRunning(running) {
   $("go").disabled = running;
@@ -250,15 +369,19 @@ async function start() {
   currentOrientation = orientation;
 
   $("err").style.display = "none";
+  $("notice").style.display = "none"; $("notice").textContent = "";
   $("story").style.display = "none";
   $("videobox").style.display = "none";
   $("videobox").classList.toggle("portrait", orientation === "portrait");
   $("player").removeAttribute("src");
   $("grid").innerHTML = "";
+  $("reviewbar").classList.remove("on"); $("approve").disabled = false; reviewSig = null;
+  $("ragbox").style.display = "none"; $("rag-list").innerHTML = "";
   $("status").style.display = "block";
   $("stop").disabled = false;
   $("stop").textContent = "■ 停止";
   setRunning(true);
+  startTimer();
   stageNames = [];
   renderStages({ step: 1, total: 4, label: "配音(逐句)" });
 
@@ -275,6 +398,8 @@ async function start() {
         style: $("style").value,
         orientation, language,
         speed: $("speed").value,
+        use_memory: $("usememory").checked,
+        review: $("review").checked,
       }),
     });
     if (!r.ok) {
@@ -288,6 +413,7 @@ async function start() {
   } catch (e) {
     showError("启动失败:" + e.message);
     setRunning(false);
+    stopTimer("启动失败,用时");
     return;
   }
   currentJob = job_id;
@@ -303,17 +429,21 @@ async function poll(job_id) {
   } catch (e) { return; }
 
   if (job.stage) renderStages(job.stage);
+  if (job.notice) { $("notice").textContent = "💡 " + job.notice; $("notice").style.display = "block"; }
   if (job.story) renderStory(job.story);
   if (job.video) {
     $("videobox").style.display = "block";
     if ($("player").getAttribute("src") !== job.video) $("player").src = job.video;
   }
   renderGrid(job);
+  renderRag(job);
 
   if (job.status === "done" || job.status === "error" || job.status === "cancelled") {
     clearInterval(timer);
     setRunning(false);
     currentJob = null;
+    stopTimer(job.status === "done" ? "总用时" :
+              job.status === "cancelled" ? "已停止,用时" : "中断,用时");
     if (job.status === "done") markStagesComplete();
     if (job.status === "error") showError("生成中断:" + (job.error || "未知错误"));
     if (job.status === "cancelled") {
@@ -354,9 +484,16 @@ function esc(s) {
 }
 
 function renderGrid(job) {
-  const total = expectedFrames;
+  if (job.awaiting_review) { renderReviewGrid(job); return; }
+  reviewSig = null;                     // 离开评审态,下次进入时重建
+  $("reviewbar").classList.remove("on");
+
+  // 后端会按"每张图最多覆盖多少秒旁白"自动补足分镜数,实际张数可能多于页面上选的,
+  // 所以格子数取两者较大值,否则多出来的图不显示。
   const byId = {};
   (job.images || []).forEach(im => { byId[im.scene_id] = im; });
+  const total = Math.max(expectedFrames, (job.images || []).length,
+                         (job.review_shots || []).length);
   const busyIndex = (job.stage && job.stage.step === 3) ? (job.images || []).length + 1 : -1;
   const cardCls = currentOrientation === "portrait" ? "card portrait" : "card";
 
@@ -375,6 +512,107 @@ function renderGrid(job) {
   if ((job.images && job.images.length) || (job.stage && job.stage.step === 3)) {
     $("grid").innerHTML = html;
   }
+}
+
+// 评审网格只在"图片 URL / 重出次数"变化时重建 —— 否则每次轮询都重绘,
+// 会把用户正在输入的改进要求清掉、输入框还会失焦。
+let reviewSig = null;
+function renderReviewGrid(job) {
+  $("reviewbar").classList.add("on");
+  const byId = {};
+  (job.images || []).forEach(im => { byId[im.scene_id] = im; });
+  const shots = job.review_shots || [];
+  const sig = shots.map(s => `${s.scene_id}:${s.attempt}:${(byId[s.scene_id] || {}).url || ""}`).join("|");
+  if (sig === reviewSig) return;
+  reviewSig = sig;
+
+  const cardCls = currentOrientation === "portrait" ? "card review portrait" : "card review";
+  $("grid").innerHTML = shots.map(s => {
+    const im = byId[s.scene_id] || {};
+    const att = s.attempt ? `<span class="att">已重出 ${s.attempt} 次</span>` : "";
+    return `<div class="${cardCls}">
+      <div class="thumb"><span class="idx">#${s.scene_id}</span>
+        <img src="${im.url || ""}" alt="frame ${s.scene_id}" /></div>
+      <div class="rv-body">
+        <textarea id="note-${s.scene_id}" rows="2"
+          placeholder="改进要求(可留空只换种子),例:换成近景只拍脸;去掉背景的人;改成白天">${esc(s.note || "")}</textarea>
+        <div class="rv-row">
+          <button onclick="regen(${s.scene_id})">↻ 重出这张</button>${att}
+        </div>
+        <details class="pv"><summary>查看 / 直接编辑英文提示词</summary>
+          <textarea id="prompt-${s.scene_id}" rows="5" class="ptxt">${esc(s.prompt || "")}</textarea>
+        </details>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function regen(sceneId) {
+  const note = ($("note-" + sceneId) || {}).value || "";
+  const promptEl = $("prompt-" + sceneId);
+  // 只有用户真的改过提示词才发 prompt 覆盖;否则让后端按 note 重新拼。
+  const edited = promptEl && promptEl.value.trim() !== (promptEl.defaultValue || "").trim()
+    ? promptEl.value : "";
+  document.querySelectorAll(".card.review button").forEach(b => b.disabled = true);
+  try {
+    const r = await fetch("/api/jobs/" + currentJob + "/regenerate", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ index: sceneId, note, prompt: edited }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  } catch (e) {
+    showError("重出失败:" + e.message);
+    document.querySelectorAll(".card.review button").forEach(b => b.disabled = false);
+  }
+}
+
+async function approve() {
+  $("approve").disabled = true;
+  try {
+    const r = await fetch("/api/jobs/" + currentJob + "/approve", { method: "POST" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    $("reviewbar").classList.remove("on");
+  } catch (e) {
+    showError("确认失败:" + e.message);
+    $("approve").disabled = false;
+  }
+}
+
+function renderRag(job) {
+  const mem = job.memory || [];
+  if (!mem.length) return;
+  $("ragbox").style.display = "block";
+  const openSet = new Set([...document.querySelectorAll("details.rag[open]")].map(d => d.dataset.sid));
+  $("rag-list").innerHTML = mem
+    .slice().sort((a, b) => (a.scene_id || 0) - (b.scene_id || 0))
+    .map(m => {
+      const hits = m.hits || [];
+      const used = hits.filter(h => h.used).length;
+      const rows = hits.map(h => `
+        <div class="rag-h ${h.used ? "" : "filtered"}">
+          <span class="sc">${(h.score ?? 0).toFixed(3)}</span>
+          <div><div class="ti">${esc(h.title || "(无题)")}
+            <span class="${h.used ? "used" : "drop"}">${h.used ? "✓采用" : "✕低于阈值"}</span></div>
+            <div class="tg">${(h.visual_tags || []).map(esc).join(", ") || "—"}</div></div>
+        </div>`).join("") || '<div class="tg" style="padding:8px 0">无命中</div>';
+      const inject = m.fragment
+        ? `<div class="rag-inject"><div class="lab">注入提示词的片段(对生成的贡献)</div>
+             <code>${esc(m.fragment)}</code></div>` : "";
+      const refs = (m.ref_images || []).length
+        ? `<div class="rag-refs">${m.ref_images.map(r => `
+             <figure><img src="${r.url}" alt="ref"/>
+               <figcaption>IPAdapter w=${r.weight}<br>${(r.score ?? 0).toFixed(2)}</figcaption></figure>`).join("")}</div>`
+        : "";
+      const open = openSet.has(String(m.scene_id)) ? "open" : "";
+      return `<details class="rag" data-sid="${m.scene_id}" ${open}>
+        <summary><span class="sid">#${m.scene_id}</span>
+          <span class="cnt">命中 ${hits.length} · 采用 ${used}</span>
+          ${m.fragment ? "" : '<span class="none">无注入</span>'}</summary>
+        <div class="rag-body">
+          <div class="q">query: ${esc(m.query || "")}</div>
+          ${rows}${inject}${refs}
+        </div></details>`;
+    }).join("");
 }
 
 function showError(msg) { $("err").textContent = msg; $("err").style.display = "block"; }

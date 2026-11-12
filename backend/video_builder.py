@@ -10,9 +10,12 @@ all driven by the `video` block in config.yaml.
 from __future__ import annotations
 
 import logging
+import math
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import imageio_ffmpeg
 
@@ -34,6 +37,8 @@ DEF_W, DEF_H = 1920, 1080           # 16:9
 DEF_FPS = 24
 DEF_CRF = 28                        # higher = smaller file
 DEF_GRAIN = 3                       # film-grain strength (0 = off); big filesize driver
+DEF_MAX_SHOT_SECONDS = 14.0         # 单个运镜镜头最长秒数(超过就拆子镜头;0 = 不拆)
+DEF_MOTION_REF = 6.0                # 运镜速度基准时长(以此时长的幅度为准按比例放大)
 
 
 def _v(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -47,18 +52,87 @@ def _v(cfg: dict[str, Any]) -> dict[str, Any]:
         "mood": bool(cfg.get("mood_overlay", True)),
         "xfade": float(cfg.get("crossfade_seconds", 0.6)),
         "clip": float(cfg.get("clip_seconds", 4.0)),
+        "color_grade": bool(cfg.get("color_grade", True)),
+        "transition_seconds": float(cfg.get("transition_seconds", 0.5)),
+        "plot_effects": bool(cfg.get("plot_effects", False)),
+        "xfade_max_clips": int(cfg.get("xfade_max_clips", 60)),
+        # x264 预设:成片要经过 每镜头片段 -> 转场链 -> 烧字幕 共三轮编码,
+        # medium -> faster 单轮快约 1.5-2 倍,同 crf 下文件略大、肉眼画质基本无差。
+        "x264_preset": str(cfg.get("x264_preset", "faster")),
+        # 运镜:幅度随镜头时长放大(见 _zoom_expr),长镜头拆分(见 _split_shots)。
+        "max_shot_seconds": float(cfg.get("max_shot_seconds", DEF_MAX_SHOT_SECONDS)),
+        "motion_ref_seconds": float(cfg.get("motion_ref_seconds", DEF_MOTION_REF)),
+        "motion_max_zoom": float(cfg.get("motion_max_zoom", 0.45)),
+        "motion_max_pan": float(cfg.get("motion_max_pan", 0.30)),
     }
 
 
-# Ken Burns movement presets, cycled per clip. Expressions use zoompan's 'on'
+# Ken Burns movement presets, picked per clip. Expressions use zoompan's 'on'
 # (output frame index); 'IN' is replaced with the clip's frame count.
+# 含纯推拉、纯平移、以及"边推边移"的组合运镜,增加镜头语言的多样性。
+#
+# 幅度(amp)不再写死在表达式里,而是按镜头时长动态放大 —— 因为 zoompan 的 on/IN 是
+# "当前帧/总帧数",总幅度固定就意味着**速度 = 幅度 / 时长**。实测:竖屏短片每张图
+# 5.8s、推近 20% = 3.4%/秒(一眼看得出在动);横屏长片每张图 40-80s、同样推近 20%
+# = 0.5%/秒甚至 0.25%/秒,肉眼等同静止图。
+#   name, kind(zin=推近 / zout=拉远 / pan=定焦平移), 基准幅度, x 表达式, y 表达式
 _PRESETS = [
-    ("zoom_in",  "1.0+0.18*on/IN",  "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
-    ("zoom_out", "1.18-0.18*on/IN", "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
-    ("pan_right","1.12",            "(iw-iw/zoom)*on/IN",      "ih/2-(ih/zoom/2)"),
-    ("pan_left", "1.12",            "(iw-iw/zoom)*(1-on/IN)",  "ih/2-(ih/zoom/2)"),
-    ("pan_up",   "1.12",            "iw/2-(iw/zoom/2)",        "(ih-ih/zoom)*(1-on/IN)"),
+    ("zoom_in",      "zin",  0.20, "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("zoom_out",     "zout", 0.20, "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("pan_right",    "pan",  0.14, "(iw-iw/zoom)*on/IN",      "ih/2-(ih/zoom/2)"),
+    ("pan_left",     "pan",  0.14, "(iw-iw/zoom)*(1-on/IN)",  "ih/2-(ih/zoom/2)"),
+    ("pan_up",       "pan",  0.14, "iw/2-(iw/zoom/2)",        "(ih-ih/zoom)*(1-on/IN)"),
+    ("pan_down",     "pan",  0.14, "iw/2-(iw/zoom/2)",        "(ih-ih/zoom)*on/IN"),
+    ("zin_right",    "zin",  0.18, "(iw-iw/zoom)*on/IN",      "ih/2-(ih/zoom/2)"),
+    ("zin_left",     "zin",  0.18, "(iw-iw/zoom)*(1-on/IN)",  "ih/2-(ih/zoom/2)"),
+    ("zin_downright","zin",  0.16, "(iw-iw/zoom)*on/IN",      "(ih-ih/zoom)*on/IN"),
 ]
+
+
+def _motion_amp(base: float, kind: str, dur: float, p: dict[str, Any]) -> float:
+    """按镜头时长放大运镜幅度,让「速度」而不是「幅度」保持恒定。
+
+    以 motion_ref_seconds(默认 6s,即竖屏短片的观感)为基准:更长的镜头按比例放大
+    幅度,并设上限防止推得太狠(推拉 0.45 / 平移 0.30)。短于基准的镜头保持原幅度,
+    所以 Shorts 那边的观感与改动前逐帧一致。
+    """
+    ref = p.get("motion_ref_seconds") or DEF_MOTION_REF
+    cap = p["motion_max_pan"] if kind == "pan" else p["motion_max_zoom"]
+    return min(cap, base * max(1.0, dur / ref))
+
+
+def _zoom_expr(kind: str, amp: float) -> str:
+    """按运镜类型生成 zoompan 的 z 表达式。"""
+    if kind == "zin":
+        return f"1.0+{amp:.3f}*on/IN"
+    if kind == "zout":
+        return f"{1.0 + amp:.3f}-{amp:.3f}*on/IN"
+    return f"{1.0 + amp:.3f}"          # pan:定焦,靠 x/y 位移
+
+
+def _split_shots(segments: list[dict[str, Any]], seg_durs: list[float],
+                 max_shot_seconds: float) -> list[dict[str, Any]]:
+    """把停留过久的镜头拆成多个子镜头(同一张图,各跑一次完整运镜)。
+
+    单张图停留 40-80 秒时,就算把幅度顶到上限也仍然"看不出在动",而且几十秒里一次
+    转场都没有。拆成若干 ≤max_shot_seconds 的子镜头后,每段各自完成一次运镜、段间还
+    多出转场。**子镜头时长之和等于原镜头时长**,所以音频/字幕的时间轴完全不受影响。
+
+    被拆开的镜头交替用 zoom_in / zoom_out:两者时长相同 => 幅度相同,前一段推到 1+amp
+    结束、后一段正好从 1+amp 拉回,接缝处缩放**连续**,不会在转场时"跳回广角"。
+    没被拆的镜头仍走全局轮换,保留运镜多样性。
+
+    effect(剧情特效)只给该镜头的第一个子镜头,否则同一种特效会连着重复播。
+    """
+    shots: list[dict[str, Any]] = []
+    for i, (seg, dur) in enumerate(zip(segments, seg_durs)):
+        k = 1 if max_shot_seconds <= 0 else max(1, math.ceil(dur / max_shot_seconds))
+        for j in range(k):
+            shots.append({"image": seg["image"], "dur": dur / k,
+                          "effect": seg.get("effect") if j == 0 else None,
+                          "preset": None if k == 1 else ("zoom_in" if j % 2 == 0 else "zoom_out"),
+                          "segment": i})
+    return shots
 
 
 def _run(cmd: list[str]) -> None:
@@ -141,6 +215,51 @@ def _trim_silence(src: Path, pad: float, threshold_db: int = 35) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _resolve_bgm(bgm_cfg: dict[str, Any]) -> Optional[Path]:
+    """从 bgm 配置解析出一个音乐文件:path 可为单文件或目录(目录则随机挑一首)。"""
+    import random
+    raw = str(bgm_cfg.get("path", "")).strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent.parent / raw
+    if p.is_file():
+        return p
+    if p.is_dir():
+        pool = [f for f in p.iterdir()
+                if f.suffix.lower() in (".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac")]
+        return random.choice(pool) if pool else None
+    return None
+
+
+def _mix_bgm(narration: Path, bgm: Path, out: Path, total: float,
+             bgm_cfg: dict[str, Any]) -> None:
+    """把 BGM 垫到旁白下面:循环铺满、压低音量、首尾淡入淡出、可选旁白闪避(ducking)。
+
+    narration 为主轨(保持原响度),bgm 为背景。输出混音音轨。
+    """
+    vol = float(bgm_cfg.get("volume", 0.18))          # BGM 相对音量(旁白=1.0)
+    fade = float(bgm_cfg.get("fade", 2.0))
+    duck = bool(bgm_cfg.get("duck", True))
+    fo = max(0.0, total - fade)
+    # BGM:调音量 + 首尾淡入淡出
+    steps = [f"[1:a]volume={vol:.3f},afade=t=in:st=0:d={fade:.2f},"
+             f"afade=t=out:st={fo:.2f}:d={fade:.2f}[bg]"]
+    bg_label = "[bg]"
+    if duck:
+        # 旁白一响就压低 BGM(sidechaincompress 以旁白为触发)
+        steps.append("[bg][0:a]sidechaincompress=threshold=0.02:ratio=8:"
+                     "attack=20:release=350[bgd]")
+        bg_label = "[bgd]"
+    # 混音:normalize=0 保持旁白响度不被拉低;duration=first 以旁白长度收尾
+    steps.append(f"[0:a]{bg_label}amix=inputs=2:duration=first:normalize=0[mix]")
+    _run([FFMPEG, "-y", "-i", str(narration), "-stream_loop", "-1", "-i", str(bgm),
+          "-filter_complex", ";".join(steps), "-map", "[mix]",
+          "-t", f"{total:.3f}", "-c:a", "aac", "-b:a", "192k", str(out)])
+    logger.info("BGM mixed [%s] vol=%.2f duck=%s -> %s", bgm.name, vol, duck, out.name)
+
+
 def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]] = None):
     """Speak `text`; return (path, duration_seconds).
 
@@ -177,6 +296,43 @@ def synth_narration(text: str, out_base: Path, tts_cfg: Optional[dict[str, Any]]
         _trim_silence(out, float(cfg.get("gap_seconds", 0.06)),
                       int(cfg.get("trim_threshold_db", 35)))
     return out, _duration(out)
+
+
+def synth_narration_batch(items: list[tuple[str, Path]], tts_cfg: Optional[dict[str, Any]] = None,
+                          workers: int = 8, on_progress: Optional[Callable[[int, int], None]] = None,
+                          should_cancel: Optional[Callable[[], bool]] = None,
+                          ) -> list[Optional[tuple[Path, float]]]:
+    """并发合成多句旁白。items = [(文本, 输出基名)],返回等长的 [(path, dur)]。
+
+    为什么要并发:单句 ≈ 网络往返(edge-tts)+ 两次 ffmpeg 子进程,本地 CPU 几乎闲着。
+    实测 416 句串行花了 18.1 分钟(占整条流水线的 26%),而这段时间 GPU/CPU 全在等网络。
+    并发 8 路后只受网络与微软端限速约束。
+
+    被取消时后续任务直接跳过并返回 None(调用方自己 check_cancel 收尾),
+    不跨模块抛异常。任一句真正失败仍照旧抛出 —— 半段没声音比慢更糟。
+    """
+    total = len(items)
+    results: list[Optional[tuple[Path, float]]] = [None] * total
+    if total == 0:
+        return results
+    done = 0
+    lock = threading.Lock()
+
+    def work(idx: int) -> None:
+        nonlocal done
+        if should_cancel is not None and should_cancel():
+            return
+        results[idx] = synth_narration(items[idx][0], items[idx][1], tts_cfg)
+        with lock:
+            done += 1
+            if on_progress is not None and (done % 20 == 0 or done == total):
+                on_progress(done, total)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(work, i) for i in range(total)]
+        for fut in futures:
+            fut.result()      # 有异常在这里原样抛出
+    return results
 
 
 # --- subtitles -------------------------------------------------------------
@@ -256,20 +412,93 @@ def _render_subtitle_png(text: str, png: Path, width: int, height: int) -> None:
 
 # --- Ken Burns clips -------------------------------------------------------
 
-def _ken_burns_clip(img: Path, out: Path, dur: float, p: dict[str, Any], preset_idx: int) -> None:
+# 剧情情绪 -> (运镜预设名, 附加滤镜, 颗粒增量)。按每段旁白的情绪给不同镜头语言:
+#   calm    平静/铺垫  -> 缓慢推近
+#   reveal  揭示/交代  -> 向右边推边移
+#   eerie   诡异/不安  -> 轻微色差(红蓝错位)+ 更多颗粒
+#   tension 紧张/压迫  -> 斜向推近 + 去饱和 + 更重暗角
+#   sad     悲伤/追忆  -> 缓慢平移 + 冷调去饱和
+#   shock   惊吓/高潮  -> 推近 + 强色差 + 开场闪白(见下)
+_EFFECTS = {
+    "calm":    ("zoom_in",      "",                              0),
+    "reveal":  ("zin_right",    "",                              0),
+    "eerie":   ("zin_left",     "rgbashift=rh=3:bh=-3",          2),
+    "tension": ("zin_downright","eq=saturation=0.85,vignette=PI/4", 1),
+    "sad":     ("pan_left",     "eq=saturation=0.80,hue=h=-6",   0),
+    "shock":   ("zoom_in",      "rgbashift=rh=6:bh=-6",          3),
+}
+_PRESET_BY_NAME = {pr[0]: pr for pr in _PRESETS}
+
+
+def _ken_burns_clip(img: Path, out: Path, dur: float, p: dict[str, Any], preset_idx: int,
+                    effect: Optional[str] = None, preset_name: Optional[str] = None) -> None:
     frames = max(1, int(dur * p["fps"]))
-    name, z, x, y = _PRESETS[preset_idx % len(_PRESETS)]
+    extra_vf, grain_add = "", 0
+    if effect and effect in _EFFECTS:
+        pname, extra_vf, grain_add = _EFFECTS[effect]
+        preset = _PRESET_BY_NAME.get(pname, _PRESETS[(preset_idx * 4) % len(_PRESETS)])
+    elif preset_name and preset_name in _PRESET_BY_NAME:
+        preset = _PRESET_BY_NAME[preset_name]   # 拆开的子镜头:指定推近/拉远保证接缝连续
+    else:
+        # 无剧情标注:用与预设数互质的步长挑选,避免连续镜头运镜雷同。
+        preset = _PRESETS[(preset_idx * 4) % len(_PRESETS)]
+    name, kind, base_amp, x, y = preset
+    amp = _motion_amp(base_amp, kind, dur, p)
+    z = _zoom_expr(kind, amp)
     z, x, y = (e.replace("IN", str(frames)) for e in (z, x, y))
     upw, uph = p["w"] * 2, p["h"] * 2   # upscale so panning stays smooth
     vf = (f"scale={upw}:{uph},zoompan=z='{z}':x='{x}':y='{y}':"
           f"d={frames}:s={p['w']}x{p['h']}:fps={p['fps']}")
+    # 电影感调色(轻微加对比/饱和/压 gamma),让画面更"成片"。
+    if p.get("color_grade"):
+        vf += ",eq=contrast=1.06:saturation=1.08:gamma=0.97"
     if p["mood"] and p["grain"] > 0:
-        vf += f",vignette=PI/5,noise=alls={p['grain']}:allf=t"
+        vf += f",vignette=PI/5,noise=alls={p['grain'] + grain_add}:allf=t"
+    if extra_vf:                       # 情绪专属特效(色差/去饱和/冷调等)
+        vf += "," + extra_vf
+    # 转场:镜头首尾各做一次极短的淡入淡出(dip),硬切拼接下也有柔和过渡,
+    # 且不改变时长(不与相邻片段重叠),不破坏音画/字幕同步。
+    # shock(惊吓)镜头开场改为"闪白",更有冲击力。
+    td = float(p.get("transition_seconds", 0.0))
+    if td > 0 and dur > 2.2 * td:
+        in_color = "white" if effect == "shock" else "black"
+        vf += (f",fade=t=in:st=0:d={td:.2f}:color={in_color}"
+               f",fade=t=out:st={dur - td:.3f}:d={td:.2f}")
     vf += ",format=yuv420p"
     _run([FFMPEG, "-y", "-loop", "1", "-i", str(img), "-t", f"{dur}", "-r", str(p["fps"]),
-          "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]),
+          "-vf", vf, "-c:v", "libx264", "-preset", p["x264_preset"], "-crf", str(p["crf"]),
           "-pix_fmt", "yuv420p", str(out)])
-    logger.info("Ken Burns clip [%s] %.1fs -> %s", name, dur, out.name)
+    logger.info("Ken Burns clip [%s%s] %.1fs amp=%.2f (%.2f%%/s) -> %s",
+                name, f"/{effect}" if effect else "", dur, amp,
+                100 * amp / max(dur, 0.001), out.name)
+
+
+# 多样切换转场(xfade 类型),按镜头顺序轮换,给成片更丰富的转场语言。
+# 都是 ffmpeg xfade 内置类型,兼顾电影感与恐怖氛围。
+_TRANSITIONS = [
+    "fade", "fadeblack", "dissolve", "smoothleft", "smoothright",
+    "slideup", "wiperight", "circleopen", "radial", "fadewhite",
+]
+
+
+def _xfade_chain(clips: list[Path], vis_durs: list[float], D: float,
+                 out: Path, p: dict[str, Any]) -> None:
+    """用 xfade 把片段交叠拼接,轮换多种转场。每个片段已各自延长 D 秒,
+    偏移(offset)按累计可见时长对齐,保证成片时间轴与音频/字幕同步。"""
+    inputs: list[str] = []
+    for c in clips:
+        inputs += ["-i", str(c)]
+    steps, prev, off = [], "[0:v]", 0.0
+    for k in range(1, len(clips)):
+        off += vis_durs[k - 1]
+        tr = _TRANSITIONS[(k - 1) % len(_TRANSITIONS)]
+        lbl = f"[x{k}]"
+        steps.append(f"{prev}[{k}:v]xfade=transition={tr}:duration={D:.3f}:"
+                     f"offset={off:.3f}{lbl}")
+        prev = lbl
+    _run([FFMPEG, "-y", *inputs, "-filter_complex", ";".join(steps), "-map", prev,
+          "-c:v", "libx264", "-preset", p["x264_preset"], "-crf", str(p["crf"]),
+          "-pix_fmt", "yuv420p", str(out)])
 
 
 def build_video(images: list[Path], out_path: Path,
@@ -305,7 +534,7 @@ def build_video(images: list[Path], out_path: Path,
                      f"offset={start:.3f}{label}")
         prev = label
     _run([FFMPEG, "-y", *inputs, "-filter_complex", ";".join(steps), "-map", prev,
-          "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]),
+          "-c:v", "libx264", "-preset", p["x264_preset"], "-crf", str(p["crf"]),
           "-pix_fmt", "yuv420p", str(out_path)])
     _cleanup(tmp)
     return out_path
@@ -359,7 +588,7 @@ def build_narrated_video(images: list[Path], lines: list[str], out_path: Path,
         prev = label
     _run([FFMPEG, "-y", "-i", str(silent), *ov_inputs, "-i", str(audio_mix),
           "-filter_complex", ";".join(ov_steps), "-map", prev, "-map", f"{1 + len(subs)}:a",
-          "-c:v", "libx264", "-preset", "medium", "-crf", str(p["crf"]), "-pix_fmt", "yuv420p",
+          "-c:v", "libx264", "-preset", p["x264_preset"], "-crf", str(p["crf"]), "-pix_fmt", "yuv420p",
           "-c:a", "aac", "-shortest", str(out_path)])
     _wipe(work)
     logger.info("Narrated video built: %s (%.1fs)", out_path, total)
@@ -434,12 +663,10 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
     work = out_path.parent / "_long"
     work.mkdir(exist_ok=True)
 
-    clips, all_audio, events, t, idx = [], [], [], 0.0, 0
-    for i, seg in enumerate(segments):
-        seg_dur = sum(l["dur"] for l in seg["lines"]) or 2.0
-        clip = work / f"clip_{i:03d}.mp4"
-        _ken_burns_clip(seg["image"], clip, seg_dur, p, i)
-        clips.append(clip)
+    # --- 先算每镜头时长 + 逐句字幕事件(与拼接方式无关)---
+    seg_durs, all_audio, events, t, idx = [], [], [], 0.0, 0
+    for seg in segments:
+        seg_durs.append(sum(l["dur"] for l in seg["lines"]) or 2.0)
         for l in seg["lines"]:
             all_audio.append(l["audio"])
             # 一句旁白拆成多屏(每屏 ≤max_sub_lines 行),按字符数比例分摊该句时长,
@@ -455,10 +682,36 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
                 ct += cdur
             idx += 1; t += l["dur"]
 
-    concat = work / "clips.txt"
-    concat.write_text("".join(f"file '{c.resolve()}'\n" for c in clips), encoding="utf-8")
+    # --- 拆子镜头 + 渲染运镜片段 ---
+    # 停留过久的镜头拆成多段(同图、各跑一次完整运镜),子镜头时长之和 = 原镜头时长,
+    # 因此上面算好的字幕时间轴与音频拼接完全不用改。
+    shots = _split_shots(segments, seg_durs, p["max_shot_seconds"])
+    shot_durs = [s["dur"] for s in shots]
+    if len(shots) > len(segments):
+        logger.info("长镜头拆分:%d 张图 -> %d 个运镜镜头(单镜头上限 %.0fs)",
+                    len(segments), len(shots), p["max_shot_seconds"])
+    n = len(shots)
+    D = float(p.get("transition_seconds", 0.0))
+    # xfade 多样转场:镜头间交叠,需把每片段延长 D、按累计时长对齐(保证音画同步)。
+    # 片段数过多时 xfade 滤镜图过大,回退到 concat 硬切(仍带片内 dip)。
+    use_xfade = D > 0 and 2 <= n <= int(p.get("xfade_max_clips", 60))
+    p_clip = {**p, "transition_seconds": 0.0} if use_xfade else p  # xfade 模式关掉片内 dip
+    clips = []
+    for i, shot in enumerate(shots):
+        clip = work / f"clip_{i:03d}.mp4"
+        eff = shot.get("effect") if p.get("plot_effects", False) else None
+        render_dur = shot_durs[i] + (D if use_xfade else 0.0)  # xfade 需要延长供交叠
+        _ken_burns_clip(shot["image"], clip, render_dur, p_clip, i, effect=eff,
+                        preset_name=shot.get("preset"))
+        clips.append(clip)
+
     silent = work / "silent.mp4"
-    _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(silent)])
+    if use_xfade:
+        _xfade_chain(clips, shot_durs, D, silent, p)
+    else:
+        concat = work / "clips.txt"
+        concat.write_text("".join(f"file '{c.resolve()}'\n" for c in clips), encoding="utf-8")
+        _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(concat), "-c", "copy", str(silent)])
 
     alist = work / "audio.txt"
     alist.write_text("".join(f"file '{a.resolve()}'\n" for a in all_audio), encoding="utf-8")
@@ -466,12 +719,26 @@ def build_long_video(segments: list[dict[str, Any]], out_path: Path,
     _run([FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(alist),
           "-c:a", "aac", "-b:a", "160k", str(audio)])
 
+    # BGM:启用且找到音乐文件时,把旁白与背景乐混音(失败则跳过,不影响成片)。
+    bgm_cfg = cfg.get("bgm", {}) or {}
+    if bgm_cfg.get("enabled"):
+        bgm_file = _resolve_bgm(bgm_cfg)
+        if bgm_file is not None:
+            try:
+                mixed = work / "audio_bgm.m4a"
+                _mix_bgm(audio, bgm_file, mixed, t, bgm_cfg)
+                audio = mixed
+            except Exception as exc:
+                logger.warning("BGM 混音失败,用纯旁白继续:%s", exc)
+        else:
+            logger.warning("BGM 已启用但未找到音乐文件(path=%s)", bgm_cfg.get("path"))
+
     ass_file = work / "subs.ass"
     ass_file.write_text(_ass_header(p["w"], p["h"], font_size, margin_v, sub_font) + "\n".join(events) + "\n",
                         encoding="utf-8")
     subs = f"ass={ass_file.as_posix()}:fontsdir=/System/Library/Fonts"
     _run([FFMPEG, "-y", "-i", str(silent), "-i", str(audio), "-vf", subs,
-          "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "medium",
+          "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", p["x264_preset"],
           "-crf", str(p["crf"]), "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(out_path)])
     _wipe(work)
     logger.info("Long video built: %s (%.1fs, %d images, %d subtitle lines)",

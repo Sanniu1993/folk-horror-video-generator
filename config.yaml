@@ -48,13 +48,107 @@ generation:
   # A fixed base seed makes runs reproducible; each frame adds its index.
   base_seed: 20260721
 
+  # --- 修脸:潜空间放大 + 低 denoise 二次采样(hires fix)---
+  # 为什么:视频模式出图 1152x640,中远景里人脸只占几十像素,SDXL 在这个尺度画不出五官,
+  # 成片经 Ken Burns 放大后"脸糊"特别明显。本地没装 Impact Pack / 人脸检测模型,
+  # 做不了 FaceDetailer 抠脸重画,整图放大后重采样是核心节点能做到的等效手段。
+  # 代价:实测该帧 23.2s -> 78.9s(约 3.4x),所以默认只对**有人物的镜头**生效
+  # (环境空镜按原速出图)。嫌慢就把 enabled 改 false,画面回到改动前的状态。
+  #
+  # 参数标定(同 seed 实拍对比,关键是「有效步数 = steps x denoise」):
+  #   steps 8  x denoise 0.40 = 3.2 步 -> 明显发糊,比不做还差(Lightning 蒸馏模型
+  #                                       在低有效步数下会把画面抹平)
+  #   steps 12 x denoise 0.45 = 5.4 步 -> 五官清晰、布料织纹可见,78.9s  <- 默认
+  #   steps 16 x denoise 0.45 = 7.2 步 -> 略好一点点,98.8s(性价比低)
+  # 另外试过「不做二次采样、直接把基础分辨率提到 1536x864」:SDXL 在这个尺寸下
+  # 会改构图甚至把人物画重复(实拍出现两个人),且脸反而更小,故不走这条路。
+  # 【2026-08-04 默认改为关闭】装了 FaceDetailer 之后,"脸糊"已由它单独解决(逐张人脸
+  # 重绘),hires 剩下的作用只是整图纹理更实,而它是单帧耗时的最大来源。同镜头实测:
+  #   hires + FaceDetailer  138.9s   1552x864
+  #   只 FaceDetailer        56.4s   1152x640  <- 脸依旧锐利(FD 把脸放大到 512 重绘)
+  #   只 hires               62.5s   1552x864
+  #   两者都不开             24.3s   1152x640
+  # 取"只 FaceDetailer"= 单帧快 2.5 倍,代价是背景/墙面纹理略软(成片要上采到 1080p,
+  # 1152->1920 是 1.67 倍,开 hires 则只有 1.24 倍)。要画质就把 enabled 改回 true。
+  hires:
+    enabled: false
+    only_with_people: true   # false = 所有帧都做(更慢,环境镜收益很小)
+    scale: 1.35              # 放大倍数(1152x640 -> 1555x864);越大越清晰也越慢
+    denoise: 0.45            # 二次采样强度。>0.5 构图会跑,<0.4 会发糊
+    upscale_method: "bislerp"
+    steps: 12                # 第二轮步数(0 = 沿用上面的 steps,对 Lightning 太少)
+    cfg: 0                   # 0 = 沿用上面的 cfg
+
+  # --- 人脸精修:FaceDetailer(逐张人脸裁切重绘再贴回)---
+  # 和上面的 hires 是两件事:hires 是整图放大重采样,只能把**已经画出来**的脸画实;
+  # 脸太小、或多人镜头里配角的脸糊,它救不了(算力都给了主体)。FaceDetailer 用 YOLO
+  # 检出画面里每一张脸,把每张脸单独放大到 guide_size 重绘再无缝贴回,配角也能拿到
+  # 和主角一样的像素预算。
+  # 依赖(已装):custom_nodes/ComfyUI-Impact-Pack + ComfyUI-Impact-Subpack,
+  #            models/ultralytics/bbox/face_yolov8m.pt
+  face_detailer:
+    enabled: true
+    only_with_people: true      # 环境空镜跳过,省时间
+    model_name: "bbox/face_yolov8m.pt"
+    guide_size: 512             # 每张脸放大到这个尺寸再重绘;越大越细也越慢
+    max_size: 1024
+    steps: 12
+    cfg: 0                      # 0 = 沿用 generation.cfg
+    denoise: 0.4                # **别超过 0.5**:再高会把脸重画成另一个人,人物一致性就没了
+    feather: 5                  # 贴回时的边缘羽化
+    bbox_threshold: 0.5         # 人脸检出置信度门槛
+    bbox_dilation: 10
+    bbox_crop_factor: 3.0       # 裁切框相对人脸放大多少(带上一点头发/脖子,重绘更自然)
+    drop_size: 24               # 小于这么多像素的检出框丢弃,免得给远处路人的糊脸浪费时间
+
 negative_prompt: >-
   lowres, bad anatomy, bad hands, text, error, missing fingers,
   extra digit, fewer digits, cropped, worst quality, low quality,
   jpeg artifacts, signature, watermark, username, blurry, cartoon,
-  anime, illustration, deformed, disfigured
+  anime, illustration, deformed, disfigured,
+  blurry face, smudged face, distorted face, asymmetric eyes, malformed eyes,
+  plastic skin, waxy skin
+
+# 全局风格尾巴(画风档 = auto 时使用)。
+# 风格已改为**跟随剧情**:每一镜的时间/光源/色调由分镜规划按该段情节与情绪自己决定,
+# 全片不再统一套一个调子(此前统一的暗调会把白天的日常段落也画成废墟)。
+# 这里只保留与情绪无关的"介质/画质"词;留空 "" 则一个字都不加。
+base_style_tail: "photorealistic, film grain, highly detailed"
+
+# 空镜(纯环境镜,画面里没有人)占全片分镜的比例。
+# 为什么要有:实测统计最近 8 轮共 125 个分镜,94% 的画面里有人,纯空镜只剩 3% —— 提示词
+# 里有 4 条"人物用近景"的规则,却从没规定"多少镜可以没人",而每镜又和一段讲人的旁白
+# 一一对应。结果整片一直怼着脸,地点从头到尾没交代清楚。
+# 这个比例会(1)写进分镜规划的 system 提示词当硬配额,(2)出图前做一次确定性兜底:
+# 不够就按该镜的 mem_env 把最静的几镜改写成纯环境镜。设 0 则完全关掉(恢复旧行为)。
+env_shot_ratio: 0.25
 
 output_dir: "outputs"
+
+# 视觉记忆库对接(folk-horror-memory)—— 松耦合、默认关闭。
+# 打开后:Step 3 生成每个分镜提示词时,按画面内容去记忆库检索真实民俗素材,
+# 把其 visual_tags 注入提示词,让画面更贴合中国民俗恐怖质感。
+# 记忆服务没启动/超时/报错会自动跳过(fail-open),不影响出图。
+# 启用前先把 folk-horror-memory 跑起来(默认 http://127.0.0.1:8100)。
+visual_memory:
+  enabled: true                      # 总开关(默认开)。服务没起也不会出问题:开跑前会
+                                     # 探测一次 /health,连不上就本次整轮跳过并记一条
+                                     # 明显的日志,不影响出图(fail-open)。
+  base_url: "http://127.0.0.1:8100"  # folk-horror-memory 的地址(run.sh 默认 8100)
+  top_k: 3                           # 每个分镜检索几条记忆
+  timeout: 4                         # HTTP 超时(秒),超时即跳过
+  # 门槛按 text-embedding-v4 的实际分布标定:同题材素材普遍落在 0.50~0.62,
+  # 完全无关的也能到 0.52,所以 0.15 等于不过滤(旧值),0.55 才真正筛得动。
+  min_score: 0.55                    # 绝对阈值:低于此值一律不注入(宁可不注入也别注错)
+  # 相对门槛实测标定(楼道女鬼一镜):0.03/0.04 会放进 0.587 的「月下河畔红衣女鬼」,
+  # 把 red dress / moonlit river 注进楼道镜头;0.02 只留下真正对味的两条。
+  score_margin: 0.02                 # 相对门槛:比本镜头 top-1 低这么多的命中也丢弃(挡"陪跑项")
+  max_fragments: 6                   # 每个分镜最多注入几个视觉标签
+  max_tags_per_hit: 3                # 单条记忆最多贡献几个标签(防 top-1 一条吃满配额)
+  # --- V2:把检索到的记忆图当 IPAdapter 参考图(构图/质感强增强)---
+  use_reference_images: false        # V2 总开关;需 ComfyUI 装了 IPAdapter SDXL 模型
+  reference_top_n: 1                 # 每个分镜取相似度最高的几张图当参考
+  reference_weight: 0.6              # IPAdapter 权重(0.4 弱借鉴 .. 0.8 强靠拢)
 
 # 画面约束 / 美术设定 —— 约束年代、地域、服饰、建筑、道具等"世界设定"。
 # 双管注入:① 喂给 DeepSeek 规划(融入角色/场景/提示词);② 兜底拼进 SDXL 提示词。
@@ -75,8 +169,43 @@ video:
   grain: 3                 # 胶片颗粒强度(0关闭)。颗粒越强文件越大
   clip_seconds: 4.0        # per-image duration (narrated modes override by voice length)
   crossfade_seconds: 0.6
+
+  # --- 运镜观感(治"长片里图片像静止的")---
+  # 根因:zoompan 的 on/IN 是"当前帧/总帧数",总幅度写死就等于**速度 = 幅度 / 时长**。
+  # 实测:竖屏短片 5.8s/张、推近 20% = 3.4%/秒(明显);横屏长片 40-80s/张、同样 20%
+  # = 0.5%~0.25%/秒,肉眼等同静止。三条一起治:
+  max_shot_seconds: 14       # ① 超过这个时长的镜头拆成多个子镜头(同图各跑一次运镜,
+                             #    时长之和不变,不影响音画/字幕同步)。0 = 不拆
+  motion_ref_seconds: 6      # ② 运镜速度基准:以该时长的幅度为准,更长的镜头按比例放大
+                             #    幅度(短于它的保持原样,所以 Shorts 观感与改动前一致)
+  motion_max_zoom: 0.45      #    推拉幅度上限(1.0 -> 1.45)
+  motion_max_pan: 0.30       #    平移幅度上限(画面宽度的 30%)
+  max_seconds_per_image: 25  # ③ 建议每张图最多覆盖多少秒旁白。超过就在页面上给一条提示
+                             #    (顺带治"一张图塞四五个事件"),但**不会改你选的分镜数**。
+                             #    0 = 连提示也不给。
+  auto_adjust_frames: false  #    true = 不提示,直接把分镜数自动补到够(上限 40 张)。
+                             #    默认 false:页面上选几张就是几张,免得出图数量和耗时
+                             #    在你不知情的情况下翻几倍。
   mood_overlay: true       # vignette + film grain for horror atmosphere
+  color_grade: true        # 电影感调色(轻微对比/饱和/压 gamma);false 关闭
+  transition_seconds: 0.5  # 镜头间转场时长;xfade 多样转场用;0 = 纯硬切
+  plot_effects: false      # 剧情驱动特效(色差/去饱和/闪白);默认关(观感偏花),true 开启
+  bgm:                     # 背景音乐:垫在旁白下,自动压低/淡入淡出/可闪避
+    enabled: false         # 开关。放好音乐文件后改 true
+    path: "assets/bgm"     # 单个音乐文件,或一个目录(目录则每次随机挑一首)
+    volume: 0.18           # BGM 相对音量(旁白=1.0);越小越轻
+    duck: true             # 旁白一响自动压低 BGM(sidechain ducking)
+    fade: 2.0              # 首尾淡入淡出秒数
+  # x264 编码预设。成片要经过「每镜头片段 -> 转场链 -> 烧字幕」三轮编码,
+  # medium -> faster 单轮快约 1.5-2 倍;同 crf 下文件略大,肉眼画质基本无差。
+  # 想要更小的文件就改回 medium(或 slow),代价是合成阶段变慢。
+  x264_preset: "faster"
+
   tts:
+    # 并发合成路数。单句 = 一次网络往返 + 两次 ffmpeg 子进程,本地几乎不吃 CPU,
+    # 串行纯属干等 —— 实测 416 句串行 18.1 分钟,占整条流水线的 26%。
+    # 8 路是稳妥值;网络好可以调到 12,调太高微软那边可能限流反而更慢。设 1 = 回到串行。
+    workers: 8
     # Narrator voice. engine "edge" = Microsoft neural voices (natural, free,
     # needs internet); falls back to macOS `say` offline.
     engine: "edge"

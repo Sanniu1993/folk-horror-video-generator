@@ -47,6 +47,13 @@ Return this exact schema:
     "lighting": "e.g. low key",
     "texture": "e.g. dark realistic"
   },
+  "world": {
+    "era": "specific, e.g. 1990s",
+    "region": "place + urban/rural, e.g. rural Guizhou, southwest China",
+    "architecture": "NAME THE MATERIALS, e.g. mud-brick walls, grey tile roofs",
+    "wardrobe": "era-correct clothing: fabric/cut/colour, e.g. worn dark blue cotton work clothes, cloth shoes"
+  },
+  "anachronisms": ["3-8 English keywords that must NOT appear for this era, e.g. smartphone, modern car, LED light"],
   "story_arc": [
     {
       "chapter": 1,
@@ -60,6 +67,9 @@ Rules:
 - 1 to 3 characters, each with a description stable enough to redraw consistently.
 - 6 to 8 chapters forming a clear rising-tension arc ending in a horror climax.
 - style_bible must be internally consistent (a single mood, palette, era).
+- world/anachronisms pin the era so clothing and buildings don't drift modern/Western;
+  keep every world field to ENGLISH keywords, ≤6 words each, and make
+  character.description clothing agree with world.wardrobe.
 - Language split:
     * title, logline, chapter titles/events, location.main -> Chinese.
     * character.description, location.style, ALL style_bible fields -> ENGLISH

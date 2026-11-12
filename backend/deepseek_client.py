@@ -16,6 +16,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# 截断重试的上限:每次加倍,到此为止(再大只会更慢,且多半是提示本身有问题)。
+_MAX_TOKENS_CAP = 16384
+
 
 def _load_dotenv() -> None:
     """Load KEY=VALUE lines from the project-root .env into os.environ.
@@ -101,7 +104,8 @@ class DeepSeekClient:
                 f"DeepSeek returned {resp.status_code}: {resp.text[:500]}"
             )
         body = resp.json()
-        content = body["choices"][0]["message"]["content"]
+        choice = body["choices"][0]
+        content = choice["message"]["content"]
         usage = body.get("usage", {})
         logger.info(
             "DeepSeek ok in %.1fs (%dch out, tokens=%s)",
@@ -111,7 +115,18 @@ class DeepSeekClient:
         try:
             return json.loads(content)
         except json.JSONDecodeError as exc:
+            # 推理模型(deepseek-v4-flash)先花 token 思考,提示越复杂思考越久。思考把
+            # max_tokens 吃光时,HTTP 200 但输出是空串或半截 JSON(finish_reason=length)。
+            # 直接抛错会让整条链路挂掉,先加倍预算重试;仍失败才把原文交给调用方抢救。
+            if choice.get("finish_reason") == "length" and max_tokens < _MAX_TOKENS_CAP:
+                bigger = min(max_tokens * 2, _MAX_TOKENS_CAP)
+                logger.warning(
+                    "DeepSeek 输出被 max_tokens 截断(reasoning=%s, 输出仅 %dch),"
+                    "max_tokens %d -> %d 重试",
+                    usage.get("completion_tokens_details", {}).get("reasoning_tokens", "?"),
+                    len(content), max_tokens, bigger)
+                return self.chat_json(system, user, temperature=temperature, max_tokens=bigger)
             logger.error("DeepSeek returned non-JSON (%dch): %s", len(content), content[:500])
-            raise DeepSeekError(
-                f"Model did not return valid JSON:\n{content[:500]}"
-            ) from exc
+            err = DeepSeekError(f"Model did not return valid JSON:\n{content[:500]}")
+            err.raw_content = content  # 完整原文,供调用方抢救被截断的部分结果
+            raise err from exc

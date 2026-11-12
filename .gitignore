@@ -16,3 +16,7 @@ logs/
 # os / editor
 .DS_Store
 .idea/
+
+# BGM 音乐(版权原因不入库,只保留说明)
+assets/bgm/*
+!assets/bgm/README.md
