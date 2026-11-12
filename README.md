@@ -69,8 +69,8 @@ flowchart LR
 ## 快速开始
 
 ```bash
-git clone https://github.com/Sanniu1993/video-generate-by-desc.git
-cd video-generate-by-desc
+git clone https://github.com/Sanniu1993/folk-horror-video-generator.git
+cd folk-horror-video-generator
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env            # 填入 DEEPSEEK_API_KEY
 # 先启动 ComfyUI(默认 127.0.0.1:8188)
